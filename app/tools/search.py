@@ -13,6 +13,7 @@ def search_materials(
     overdue_only: bool = False,
     limit: int = 100,
     offset: int = 0,
+    project_id: str = "default",
 ) -> list[dict]:
     """多条件筛选，只读"""
     conditions = []
@@ -40,7 +41,7 @@ def search_materials(
     sql = f"SELECT * FROM materials {where} ORDER BY current_eta ASC LIMIT ? OFFSET ?"
     params += [limit, offset]
 
-    conn = get_connection()
+    conn = get_connection(project_id)
     try:
         cur = conn.execute(sql, params)
         rows = cur.fetchall()
@@ -49,9 +50,9 @@ def search_materials(
         conn.close()
 
 
-def get_material(po_number: str, item_no: str) -> dict | None:
+def get_material(po_number: str, item_no: str, project_id: str = "default") -> dict | None:
     """单行详情，只读"""
-    conn = get_connection()
+    conn = get_connection(project_id)
     try:
         cur = conn.execute(
             "SELECT * FROM materials WHERE po_number=? AND item_no=?",

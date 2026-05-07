@@ -3,7 +3,7 @@ from __future__ import annotations
 from app.db.connection import get_connection
 
 
-def query_aggregates(group_by: str = "status", filters: dict | None = None) -> list[dict]:
+def query_aggregates(group_by: str = "status", filters: dict | None = None, project_id: str = "default") -> list[dict]:
     """
     聚合查询（只读），支持按 status / supplier / buyer_email 分组。
     """
@@ -33,7 +33,7 @@ def query_aggregates(group_by: str = "status", filters: dict | None = None) -> l
         ORDER BY total DESC
         LIMIT 50
     """
-    conn = get_connection()
+    conn = get_connection(project_id)
     try:
         cur = conn.execute(sql, params)
         return [dict(r) for r in cur.fetchall()]
@@ -41,9 +41,9 @@ def query_aggregates(group_by: str = "status", filters: dict | None = None) -> l
         conn.close()
 
 
-def get_overview() -> dict:
+def get_overview(project_id: str = "default") -> dict:
     """首页概览数据"""
-    conn = get_connection()
+    conn = get_connection(project_id)
     try:
         cur = conn.execute("""
             SELECT

@@ -11,9 +11,10 @@ def update_material_field(
     value,
     source: str = "chat_command",
     operator: str | None = None,
+    project_id: str = "default",
 ) -> dict:
     """更新单字段（走优先级治理）"""
-    conn = get_connection()
+    conn = get_connection(project_id)
     try:
         cur = conn.execute(
             "SELECT id FROM materials WHERE po_number=? AND item_no=?",
@@ -31,9 +32,9 @@ def update_material_field(
         conn.close()
 
 
-def mark_focus(material_ids: list[int], reason: str = "") -> dict:
+def mark_focus(material_ids: list[int], reason: str = "", project_id: str = "default") -> dict:
     """批量打重点标"""
-    conn = get_connection()
+    conn = get_connection(project_id)
     try:
         for mid in material_ids:
             conn.execute(

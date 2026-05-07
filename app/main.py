@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from dotenv import load_dotenv
 
 from app.db.connection import init_db
+from app.logger import setup_logging
 from app.api import (
     projects,
     materials,
@@ -26,6 +27,7 @@ load_dotenv(override=True)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db("default")
+    setup_logging()
     yield
 
 

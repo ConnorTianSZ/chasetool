@@ -7,12 +7,12 @@ from app.services.outlook_send import send_chase_email, build_chase_subject, loa
 from app.services.llm_client import generate_chase_email
 
 
-def generate_chase_drafts(material_ids: list[int], tone: str = "formal") -> list[dict]:
+def generate_chase_drafts(material_ids: list[int], tone: str = "formal", project_id: str = "default") -> list[dict]:
     """
     按供应商分组，为每组生成催货草稿（不发送）。
     返回 drafts list，每项含 {to_address, subject, body, material_ids, marker}
     """
-    conn = get_connection()
+    conn = get_connection(project_id)
     try:
         placeholders = ",".join("?" * len(material_ids))
         cur = conn.execute(
@@ -51,6 +51,7 @@ def generate_chase_drafts(material_ids: list[int], tone: str = "formal") -> list
 def send_chase_drafts(
     drafts: list[dict],
     mode: Literal["draft", "send"] = "draft",
+    project_id: str = "default",
 ) -> list[dict]:
     """发送或保存草稿，返回每封的结果"""
     results = []

@@ -34,3 +34,11 @@ api.txt
 
 # Excel cache / temp
 *.tmp
+
+# Probe / test artifacts
+.probe-data/
+.test-data/
+.test-db/
+sqlite_*.db
+sqlite_*.db-journal
+sqlite_app_probe*
