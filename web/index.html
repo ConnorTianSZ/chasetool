@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ChaseBase</title>
   <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
   <script src="/static/app.js"></script>
@@ -747,7 +748,12 @@
           </template>
           <template x-for="(msg, i) in messages" :key="i">
             <div class="chat-msg" :class="msg.role">
-              <div class="chat-bubble" x-text="msg.content"></div>
+              <template x-if="msg.role==='user'">
+                <div class="chat-bubble" x-text="msg.content"></div>
+              </template>
+              <template x-if="msg.role==='assistant'">
+                <div class="chat-bubble chat-bubble-md" x-html="marked.parse(msg.content||'', {breaks:true})"></div>
+              </template>
             </div>
           </template>
           <div x-show="loading" class="chat-msg assistant">

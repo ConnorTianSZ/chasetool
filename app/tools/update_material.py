@@ -32,16 +32,46 @@ def update_material_field(
         conn.close()
 
 
-def mark_focus(material_ids: list[int], reason: str = "", project_id: str = "default") -> dict:
-    """批量打重点标"""
+def mark_focus(
+    material_ids: list[int] | None = None,
+    po_number: str | None = None,
+    item_no: str | None = None,
+    focus: bool = True,
+    reason: str = "",
+    project_id: str = "default",
+) -> dict:
+    """标记/取消重点
+
+    支持两种方式指定物料：
+    - material_ids: 数据库 ID 列表（批量，registry 调用兼容）
+    - po_number + item_no: 按采购单和行号指定（chat 调用用）
+    focus=True 打标，focus=False 取消。
+    """
     conn = get_connection(project_id)
     try:
-        for mid in material_ids:
+        targets: list[int] = []
+        if material_ids is not None:
+            targets = list(material_ids)
+        elif po_number is not None and item_no is not None:
+            cur = conn.execute(
+                "SELECT id FROM materials WHERE po_number=? AND item_no=?",
+                (po_number, item_no),
+            )
+            row = cur.fetchone()
+            if not row:
+                return {"ok": False, "reason": "物料不存在"}
+            targets = [row[0]]
+        else:
+            return {"ok": False, "reason": "请提供 material_ids 或 po_number+item_no"}
+
+        fv = 1 if focus else 0
+        fr = reason if focus else ""
+        for mid in targets:
             conn.execute(
-                "UPDATE materials SET is_focus=1, focus_reason=? WHERE id=?",
-                (reason, mid),
+                "UPDATE materials SET is_focus=?, focus_reason=? WHERE id=?",
+                (fv, fr, mid),
             )
         conn.commit()
-        return {"ok": True, "updated": len(material_ids)}
+        return {"ok": True, "updated": len(targets)}
     finally:
         conn.close()
