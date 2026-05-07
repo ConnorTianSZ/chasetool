@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ChaseBase</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="/static/app.js"></script>
+</head>
+<body x-data="root">
+
+<div id="toast-container" class="toast-container"></div>
+
+<!-- ══════════════════════════════════════════════════════
+     首页：项目选择
+══════════════════════════════════════════════════════ -->
+<div x-show="view === 'home'" class="home-screen">
+  <div class="home-header">
+    <div class="home-logo">Chase<span>Base</span></div>
+    <div class="home-subtitle">采购催货管理系统</div>
+  </div>
+
+  <div class="home-body">
+    <div class="home-section-title">选择项目</div>
+
+    <div class="project-grid">
+      <!-- 新建项目卡片 -->
+      <div class="project-card project-card-new" @click="showNewProject = true">
+        <div class="project-card-icon">＋</div>
+        <div class="project-card-name">新建项目</div>
+      </div>
+
+      <!-- 已有项目 -->
+      <template x-for="p in projects" :key="p.id">
+        <div class="project-card" @click="selectProject(p)">
+          <div class="project-card-icon" style="font-size:28px;">📁</div>
+          <div class="project-card-name" x-text="p.name"></div>
+          <div class="project-card-id" x-text="p.id"></div>
+          <div class="project-card-desc" x-text="p.description || ''"></div>
+        </div>
+      </template>
+
+      <template x-if="projects.length === 0">
+        <div style="grid-column:1/-1;text-align:center;color:#888;padding:40px 0;">
+          暂无项目，点击"新建项目"开始
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- 新建项目 Modal -->
+  <div class="modal-overlay" x-show="showNewProject" @click.self="showNewProject=false" style="display:none;">
+    <div class="modal" x-show="showNewProject">
+      <div class="modal-header">
+        <h3>新建项目</h3>
+        <button class="modal-close" @click="showNewProject=false">×</button>
+      </div>
+      <div class="modal-body">
+        <div style="display:grid;gap:14px;">
+          <div>
+            <label class="field-label">项目 ID（唯一标识，如 M.6001515）</label>
+            <input type="text" x-model="newForm.id" placeholder="M.6001515" style="width:100%;margin-top:4px;" />
+          </div>
+          <div>
+            <label class="field-label">项目名称</label>
+            <input type="text" x-model="newForm.name" placeholder="1515 项目" style="width:100%;margin-top:4px;" />
+          </div>
+          <div>
+            <label class="field-label">描述（可选）</label>
+            <input type="text" x-model="newForm.description" placeholder="简短描述" style="width:100%;margin-top:4px;" />
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" @click="showNewProject=false">取消</button>
+        <button class="btn btn-primary" @click="createProject()" :disabled="loading">
+          <span x-text="loading ? '创建中…' : '创建项目'"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════
+     子应用：已选定项目
+══════════════════════════════════════════════════════ -->
+<div x-show="view === 'app'" class="app" x-cloak>
+
+  <!-- ── 侧边栏 ── -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">Chase<span>Base</span></div>
+    <div class="sidebar-project" x-text="activeProject?.name || ''" title="点击返回" @click="backHome()" style="cursor:pointer;"></div>
+
+    <nav style="flex:1;display:flex;flex-direction:column;padding:6px 0;">
+      <a class="nav-item" :class="{active: $store.nav.page==='materials'}" @click="$store.nav.setPage('materials')">
+        <span class="icon">📋</span><span>物料表</span>
+      </a>
+      <a class="nav-item" :class="{active: $store.nav.page==='inbox'}" @click="$store.nav.setPage('inbox')">
+        <span class="icon">📬</span><span>收件审批</span>
+      </a>
+      <a class="nav-item" :class="{active: $store.nav.page==='dashboard'}" @click="$store.nav.setPage('dashboard')">
+        <span class="icon">📊</span><span>Dashboard</span>
+      </a>
+      <a class="nav-item" :class="{active: $store.nav.page==='chat'}" @click="$store.nav.setPage('chat')">
+        <span class="icon">💬</span><span>Chat</span>
+      </a>
+      <a class="nav-item" :class="{active: $store.nav.page==='imports'}" @click="$store.nav.setPage('imports')">
+        <span class="icon">📥</span><span>导入 Excel</span>
+      </a>
+      <a class="nav-item" :class="{active: $store.nav.page==='settings'}" @click="$store.nav.setPage('settings')">
+        <span class="icon">⚙️</span><span>设置</span>
+      </a>
+      <div style="flex:1;"></div>
+      <a class="nav-item" @click="backHome()" style="margin-bottom:8px;">
+        <span class="icon">🏠</span><span>切换项目</span>
+      </a>
+    </nav>
+  </aside>
+
+  <!-- ── 主内容 ── -->
+  <div class="main">
+
+    <!-- ════════ 物料表 ════════ -->
+    <template x-if="$store.nav.page === 'materials' && activeProject">
+      <div x-data="materials(activeProject.id)" style="display:flex;flex-direction:column;flex:1;min-height:0;">
+
+        <div class="topbar">
+          <span class="topbar-title">物料总览</span>
+          <span class="badge badge-open" x-text="total + ' 条'"></span>
+          <span x-show="filterOptions.stations.length" style="font-size:12px;color:#888;margin-left:8px;"
+                x-text="filterOptions.stations.length + ' 个站号'"></span>
+          <label class="key-date-control">
+            <span>KEY DATE</span>
+            <input type="date" x-model="keyDate" @change="saveKeyDate()" />
+          </label>
+        </div>
+
+        <!-- 筛选栏 -->
+        <div class="filter-bar">
+          <input type="text" placeholder="搜索 PO/料号/描述…" x-model="filters.search" @keydown.enter="applyFilter()" style="width:200px;" />
+          <input type="text" placeholder="PO号" x-model="filters.po_number" style="width:120px;" />
+          <select x-model="filters.station_no" style="width:100px;">
+            <option value="">全部站号</option>
+            <template x-for="s in filterOptions.stations" :key="s">
+              <option :value="s" x-text="s + ' 站'"></option>
+            </template>
+          </select>
+          <select x-model="filters.purchasing_group" style="width:90px;">
+            <option value="">全部 PGR</option>
+            <template x-for="pg in filterOptions.purchasing_groups" :key="pg">
+              <option :value="pg" x-text="pg"></option>
+            </template>
+          </select>
+          <details class="multi-filter">
+            <summary x-text="buyerFilterLabel"></summary>
+            <div class="multi-filter-menu">
+              <template x-for="b in filterOptions.buyers" :key="b.key">
+                <label>
+                  <input type="checkbox" :value="b.key" x-model="filters.buyer_key" />
+                  <span x-text="b.name || b.email || '未知'"></span>
+                </label>
+              </template>
+              <template x-if="filterOptions.buyers.length===0">
+                <div class="multi-empty">暂无采购员</div>
+              </template>
+            </div>
+          </details>
+          <select x-model="filters.material_state">
+            <option value="">全部状态</option>
+            <option value="normal">正常</option>
+            <option value="overdue">逾期</option>
+            <option value="delivered">已交货</option>
+            <option value="no_oc">无OC</option>
+          </select>
+          <label class="check-label"><input type="checkbox" x-model="filters.overdue" /> 仅逾期</label>
+          <label class="check-label"><input type="checkbox" x-model="filters.no_eta" /> 无交期</label>
+          <label class="check-label"><input type="checkbox" :checked="filters.is_focus==='true'" @change="filters.is_focus=($event.target.checked?'true':'')" /> 重点</label>
+          <button class="btn btn-primary btn-sm" @click="applyFilter()">筛选</button>
+          <button class="btn btn-outline btn-sm" @click="resetFilter()">重置</button>
+        </div>
+
+        <!-- 工具栏 -->
+        <div class="toolbar">
+          <template x-if="selected.size > 0">
+            <span class="selected-hint">已选 <strong x-text="selected.size"></strong> 条</span>
+          </template>
+          <button class="btn btn-primary btn-sm" @click="openChaseModal()" :disabled="selected.size===0">✉️ 一键催货</button>
+          <button class="btn btn-outline btn-sm" @click="load()">🔄 刷新</button>
+          <div class="toolbar-options">
+            <span>催货显示</span>
+            <label class="check-label"><input type="checkbox" x-model="chaseView.count" /> 次数</label>
+            <label class="check-label"><input type="checkbox" x-model="chaseView.chaseDate" /> 催货日</label>
+            <label class="check-label"><input type="checkbox" x-model="chaseView.feedbackDate" /> 反馈日</label>
+          </div>
+        </div>
+
+        <!-- 表格 -->
+        <div class="table-wrap" style="flex:1;overflow:auto;">
+          <div x-show="loading" class="loading-hint">加载中…</div>
+          <table x-show="!loading">
+            <thead>
+              <tr>
+                <th><input type="checkbox" @change="toggleAll()" /></th>
+                <th>PO号</th>
+                <th>Item</th>
+                <th>WBS</th>
+                <th>PGR</th>
+                <th>供应商</th>
+                <th>料号</th>
+                <th>描述</th>
+                <th>制造商</th>
+                <th>订单数量</th>
+                <th>未交数量</th>
+                <th>下单日期</th>
+                <th>确认交期</th>
+                <th>状态</th>
+                <th>催货状态</th>
+                <th>采购员</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="item in items" :key="item.id">
+                <tr :class="{'is-focus': item.is_focus, 'is-overdue': isOverdue(item), 'is-no-eta': noEta(item)}">
+                  <td><input type="checkbox" :checked="selected.has(item.id)" @change="toggleSelect(item.id)" /></td>
+                  <td x-text="item.po_number"></td>
+                  <td x-text="item.item_no"></td>
+                  <td x-text="item.wbs_element || '—'"></td>
+                  <td><span x-text="item.purchasing_group || '—'"></span></td>
+                  <td x-text="item.supplier || '—'"></td>
+                  <td x-text="item.part_no || '—'"></td>
+                  <td class="td-desc" :title="item.description" x-text="item.description || '—'"></td>
+                  <td x-text="item.manufacturer || '—'" style="font-size:12px;"></td>
+                  <td x-text="item.quantity ? (item.quantity + ' ' + (item.unit||'')) : '—'"></td>
+                  <td x-text="item.open_quantity_gr ?? '—'"></td>
+                  <td x-text="item.display_order_date || formatDate(item.order_date) || '—'"></td>
+                  <td>
+                    <template x-if="noEta(item)">
+                      <span class="badge badge-no-eta">无OC</span>
+                    </template>
+                    <template x-if="!noEta(item)">
+                      <span x-text="item.display_current_eta || formatDate(item.current_eta)" :style="isOverdue(item) ? 'color:#dc2626;font-weight:600' : ''"></span>
+                    </template>
+                  </td>
+                  <td>
+                    <span class="badge" :class="statusBadge(item)" x-text="item.material_state_label || item.status"></span>
+                  </td>
+                  <td><span class="badge" :class="item.chase_badge || 'badge-cancelled'" x-text="chaseDisplay(item)"></span></td>
+                  <td :title="item.buyer_email || ''" x-text="item.buyer_name || item.buyer_email || '—'"></td>
+                  <td style="white-space:nowrap;">
+                    <button class="btn btn-outline btn-sm" @click="openDetail(item)">详情</button>
+                    <button class="btn btn-sm" :class="item.is_focus ? 'btn-warning' : 'btn-outline'" @click="toggleFocus(item)" :title="item.is_focus?'取消重点':'标记重点'">
+                      <span x-text="item.is_focus ? '⭐' : '☆'"></span>
+                    </button>
+                  </td>
+                </tr>
+              </template>
+              <template x-if="items.length === 0 && !loading">
+                <tr><td colspan="17" class="empty"><div class="icon">📋</div>暂无数据，请先导入 Excel</td></tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- 分页 -->
+        <div class="pagination">
+          <span style="font-size:12px;color:#888;margin-right:8px;">共 <b x-text="total"></b> 条</span>
+          <button @click="prevPage()" :disabled="page<=1">‹</button>
+          <button class="active" x-text="page"></button>
+          <span style="font-size:12px;padding:0 4px;">/</span>
+          <button x-text="totalPages" @click="page=totalPages;load()"></button>
+          <button @click="nextPage()" :disabled="page>=totalPages">›</button>
+        </div>
+
+        <!-- ── 详情 Modal ── -->
+        <div class="modal-overlay" x-show="showDetail" @click.self="showDetail=false" style="display:none;">
+          <div class="modal" x-show="showDetail">
+            <div class="modal-header">
+              <h3>物料详情</h3>
+              <button class="modal-close" @click="showDetail=false">×</button>
+            </div>
+            <div class="modal-body" x-show="detailItem">
+              <template x-if="detailItem">
+                <div>
+                  <table class="detail-table">
+                    <tr><td>PO号</td><td x-text="detailItem.po_number"></td><td>Item</td><td x-text="detailItem.item_no"></td></tr>
+                    <tr><td>WBS</td><td x-text="detailItem.wbs_element||'—'"></td><td>站号</td><td x-text="detailItem.station_no||'—'"></td></tr>
+                    <tr><td>采购组</td><td x-text="detailItem.purchasing_group||'—'"></td><td>供应商</td><td x-text="detailItem.supplier||'—'"></td></tr>
+                    <tr><td>供应商编号</td><td x-text="detailItem.supplier_code||'—'"></td><td>Plant</td><td x-text="detailItem.plant||'—'"></td></tr>
+                    <tr><td>料号</td><td x-text="detailItem.part_no||'—'"></td><td>制造商</td><td x-text="detailItem.manufacturer||'—'"></td></tr>
+                    <tr><td>制造商料号</td><td x-text="detailItem.manufacturer_part_no||'—'"></td><td>订单数量</td><td x-text="(detailItem.quantity||'—')+' '+(detailItem.unit||'')"></td></tr>
+                    <tr><td>未交数量</td><td x-text="detailItem.open_quantity_gr??'—'"></td><td>净价</td><td x-text="detailItem.net_order_price ? (detailItem.net_order_price+' '+detailItem.currency) : '—'"></td></tr>
+                    <tr><td>订单金额</td><td x-text="detailItem.net_order_value ? (detailItem.net_order_value+' '+detailItem.currency) : '—'"></td><td>下单日期</td><td x-text="detailItem.display_order_date || formatDate(detailItem.order_date) || '—'"></td></tr>
+                    <tr><td>静态交期</td><td x-text="formatDate(detailItem.statical_delivery_date)||'—'"></td><td>采购员</td><td x-text="detailItem.buyer_name || detailItem.buyer_email || '—'"></td></tr>
+                  </table>
+
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0;">
+                    <div>
+                      <label class="field-label">确认交期（Confirmed Del. Date）</label>
+                      <input type="date" x-model="detailItem.current_eta" style="width:100%;margin-top:4px;" />
+                    </div>
+                    <div>
+                      <label class="field-label">供应商反馈交期</label>
+                      <input type="date" x-model="detailItem.supplier_eta" style="width:100%;margin-top:4px;" />
+                    </div>
+                    <div>
+                      <label class="field-label">状态</label>
+                      <select x-model="detailItem.status" style="width:100%;margin-top:4px;">
+                        <option value="open">进行中</option>
+                        <option value="delivered">已交货</option>
+                        <option value="cancelled">已取消</option>
+                        <option value="on_hold">暂停</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label class="field-label">供应商备注</label>
+                      <input type="text" x-model="detailItem.supplier_remarks" style="width:100%;margin-top:4px;" placeholder="无" />
+                    </div>
+                  </div>
+
+                  <div style="font-size:12px;font-weight:600;color:#888;margin-bottom:6px;">字段更新历史</div>
+                  <div style="max-height:150px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:4px;">
+                    <table style="font-size:11px;width:100%;">
+                      <thead><tr style="background:#f9fafb;"><th style="padding:3px 8px;">字段</th><th>旧值</th><th>新值</th><th>来源</th><th>时间</th></tr></thead>
+                      <tbody>
+                        <template x-for="h in detailHistory" :key="h.id">
+                          <tr style="border-bottom:1px solid #f3f4f6;">
+                            <td style="padding:3px 8px;" x-text="h.field_name"></td>
+                            <td x-text="h.old_value||'—'"></td><td x-text="h.new_value||'—'"></td>
+                            <td x-text="h.source"></td><td x-text="(h.timestamp||'').slice(0,16)"></td>
+                          </tr>
+                        </template>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </template>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-outline" @click="showDetail=false">取消</button>
+              <button class="btn btn-primary" @click="saveDetail()">保存</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── 催货预览 Modal ── -->
+        <div class="modal-overlay" x-show="showChaseModal" @click.self="showChaseModal=false" style="display:none;">
+          <div class="modal" style="width:720px;" x-show="showChaseModal">
+            <div class="modal-header">
+              <h3>催货邮件预览</h3>
+              <button class="modal-close" @click="showChaseModal=false">×</button>
+            </div>
+            <div class="modal-body">
+              <div x-show="chaseLoading" class="loading-hint">正在生成草稿…</div>
+              <template x-if="!chaseLoading">
+                <div>
+                  <div class="form-row" style="margin-bottom:12px;">
+                    <span style="font-size:13px;white-space:nowrap;">发送方式：</span>
+                    <label class="check-label"><input type="radio" x-model="chaseMode" value="draft" /> 保存草稿到 Outlook（推荐）</label>
+                    <label class="check-label"><input type="radio" x-model="chaseMode" value="send" /> 直接发送</label>
+                  </div>
+                  <template x-for="(draft, i) in chaseDrafts" :key="i">
+                    <div style="border:1px solid #e5e7eb;border-radius:6px;margin-bottom:10px;overflow:hidden;">
+                      <div style="padding:7px 12px;background:#f9fafb;font-size:12px;color:#555;">
+                        收件人：<strong x-text="draft.to_address || '（未配置邮箱）'"></strong>
+                        &nbsp;|&nbsp; 主题：<strong x-text="draft.subject"></strong>
+                      </div>
+                      <textarea x-model="draft.body" style="width:100%;height:130px;border:none;padding:10px;font-size:12px;resize:vertical;outline:none;"></textarea>
+                    </div>
+                  </template>
+                  <template x-if="chaseDrafts.length===0"><div class="empty">暂无草稿</div></template>
+                </div>
+              </template>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-outline" @click="showChaseModal=false">取消</button>
+              <button class="btn btn-primary" @click="sendChase()" :disabled="chaseLoading||chaseDrafts.length===0">
+                <span x-text="chaseMode==='draft' ? '保存草稿' : '立即发送'"></span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /materials -->
+    </template>
+
+
+    <!-- ════════ 收件审批 ════════ -->
+    <template x-if="$store.nav.page === 'inbox' && activeProject">
+      <div x-data="inbox(activeProject.id)" style="display:flex;flex-direction:column;flex:1;min-height:0;">
+
+        <div class="topbar">
+          <span class="topbar-title">收件审批</span>
+          <select x-model="statusFilter" @change="page=1;load()" style="width:110px;">
+            <option value="">全部</option>
+            <option value="new">未解析</option>
+            <option value="pending_confirm">待确认</option>
+            <option value="applied">已入库</option>
+            <option value="rejected">已拒绝</option>
+            <option value="escalate">已升级</option>
+          </select>
+        </div>
+
+        <!-- 操作栏 -->
+        <div class="toolbar" style="flex-wrap:wrap;gap:10px;padding:12px 16px;border-bottom:1px solid #e5e7eb;">
+
+          <!-- 拉取收件箱 -->
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-primary btn-sm" @click="pull()" :disabled="pulling">
+              <span x-text="pulling ? '拉取中…' : '🔄 查找回邮'"></span>
+            </button>
+            <label class="check-label">
+              <input type="checkbox" x-model="deepSearch" /> 深度查找（90天）
+            </label>
+            <template x-if="!deepSearch">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-size:12px;color:#888;">自定义天数：</span>
+                <input type="number" x-model="pullDays" placeholder="留空=自动" style="width:80px;font-size:12px;" min="1" max="365" />
+              </div>
+            </template>
+            <span class="pull-hint" x-text="pullHint"></span>
+          </div>
+
+          <!-- 上传 .msg 文件 -->
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:12px;color:#888;">补传 .msg：</span>
+            <label class="btn btn-outline btn-sm" style="cursor:pointer;">
+              <span x-text="msgUploading ? '上传中…' : '📎 选择 .msg 文件'"></span>
+              <input type="file" accept=".msg" style="display:none;" @change="uploadMsg($event)" :disabled="msgUploading" />
+            </label>
+          </div>
+
+        </div>
+
+        <!-- 邮件列表 -->
+        <div class="content" style="flex:1;overflow-y:auto;">
+          <div x-show="loading" class="loading-hint">加载中…</div>
+
+          <template x-for="item in items" :key="item.id">
+            <div class="inbox-card">
+              <div class="inbox-card-header">
+                <span style="font-weight:600;" x-text="item.from_address"></span>
+                <span style="color:#888;margin-left:8px;font-size:12px;" x-text="(item.received_at||'').slice(0,16)"></span>
+                <span style="flex:1;margin:0 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;" x-text="item.subject"></span>
+                <template x-if="item.parsed_marker">
+                  <span class="badge badge-open" x-text="item.parsed_marker" style="margin-right:6px;font-size:10px;"></span>
+                </template>
+                <span class="badge"
+                  :class="{
+                    'badge-open':      item.status==='new',
+                    'badge-on_hold':   item.status==='pending_confirm',
+                    'badge-delivered': item.status==='applied',
+                    'badge-cancelled': item.status==='rejected'||item.status==='escalate'
+                  }"
+                  x-text="item.status"></span>
+              </div>
+
+              <div class="inbox-card-body">
+                <div class="inbox-email-panel" x-text="item.body"></div>
+                <div class="inbox-parsed-panel">
+                  <template x-if="item.llm_extracted_json">
+                    <div>
+                      <div class="field-row">
+                        <span class="field-label">新交期</span>
+                        <input type="date" x-model="item._eta_edit" :placeholder="item.llm_extracted_json?.new_eta||''" style="flex:1;" />
+                      </div>
+                      <div class="field-row">
+                        <span class="field-label">备注</span>
+                        <input type="text" x-model="item._remarks_edit" :placeholder="item.llm_extracted_json?.remarks||''" style="flex:1;" />
+                      </div>
+                      <div class="field-row">
+                        <span class="field-label">置信度</span>
+                        <span style="color:#888;font-size:12px;" x-text="((item.llm_extracted_json?.confidence||0)*100).toFixed(0)+'%'"></span>
+                      </div>
+                    </div>
+                  </template>
+                  <template x-if="!item.llm_extracted_json">
+                    <div style="color:#888;font-size:12px;padding-top:10px;">点击「解析」提取交期信息</div>
+                  </template>
+                </div>
+              </div>
+
+              <div class="inbox-card-footer">
+                <button class="btn btn-outline btn-sm" @click="parse(item)" x-show="item.status==='new'">🤖 解析</button>
+                <button class="btn btn-success btn-sm" @click="decide(item,'apply')"   x-show="item.status==='pending_confirm'">✅ 接受入库</button>
+                <button class="btn btn-outline btn-sm" @click="decide(item,'reject')"  x-show="item.status==='pending_confirm'">❌ 拒绝</button>
+                <button class="btn btn-danger  btn-sm" @click="decide(item,'escalate')" x-show="item.status==='pending_confirm'">🚨 升级</button>
+              </div>
+            </div>
+          </template>
+
+          <template x-if="items.length===0 && !loading">
+            <div class="empty"><div class="icon">📬</div>暂无邮件，点击「查找回邮」拉取</div>
+          </template>
+        </div>
+
+      </div><!-- /inbox -->
+    </template>
+
+
+    <!-- ════════ Dashboard ════════ -->
+    <template x-if="$store.nav.page === 'dashboard' && activeProject">
+      <div x-data="dashboard(activeProject.id)" style="display:flex;flex-direction:column;flex:1;min-height:0;">
+        <div class="topbar">
+          <span class="topbar-title">Dashboard</span>
+          <button class="btn btn-outline btn-sm" @click="init()">🔄 刷新</button>
+        </div>
+        <div class="content">
+          <div class="stat-grid" style="margin-bottom:20px;">
+            <div class="stat-card primary"><div class="num" x-text="overview.total||0"></div><div class="label">物料总行数</div></div>
+            <div class="stat-card"><div class="num" x-text="overview.open_count||0"></div><div class="label">进行中</div></div>
+            <div class="stat-card danger"><div class="num" x-text="overview.overdue_count||0"></div><div class="label">已逾期</div></div>
+            <div class="stat-card warning"><div class="num" x-text="overview.no_eta_count||0"></div><div class="label">未确认交期</div></div>
+            <div class="stat-card warning"><div class="num" x-text="overview.focus_count||0"></div><div class="label">重点关注</div></div>
+            <div class="stat-card success"><div class="num" x-text="overview.delivered_count||0"></div><div class="label">已交货</div></div>
+          </div>
+          <div class="chart-grid">
+            <div class="chart-box"><h4>状态分布</h4><canvas id="chart-status" height="200"></canvas></div>
+            <div class="chart-box"><h4>逾期最多供应商（Top 10）</h4><canvas id="chart-overdue" height="200"></canvas></div>
+          </div>
+
+          <!-- ── 交期时间节点预测 ── -->
+          <div class="card" style="margin-top:16px;">
+            <div class="card-header">
+              <h3>交期时间节点预测</h3>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <button class="btn btn-primary btn-sm" @click="showAddTimeNode = true">＋ 添加时间节点</button>
+                <button class="btn btn-outline btn-sm" @click="loadTimeNodes()">🔄</button>
+              </div>
+            </div>
+            <div class="card-body">
+              <!-- 添加时间节点表单 -->
+              <div x-show="showAddTimeNode" style="display:flex;gap:10px;padding:12px;background:#f9fafb;border-radius:6px;margin-bottom:12px;flex-wrap:wrap;align-items:end;">
+                <div>
+                  <label class="field-label">节点名称</label>
+                  <input type="text" x-model="newTimeNode.label" placeholder="如 第6周" style="width:120px;" />
+                </div>
+                <div>
+                  <label class="field-label">日期</label>
+                  <input type="date" x-model="newTimeNode.node_date" style="width:150px;" />
+                </div>
+                <div>
+                  <label class="field-label">颜色</label>
+                  <div style="display:flex;gap:6px;margin-top:4px;">
+                    <template x-for="c in colorPresets" :key="c">
+                      <span style="display:inline-block;width:26px;height:26px;border-radius:50%;cursor:pointer;border:2px solid;"
+                        :style="'background:'+c+';border-color:'+(newTimeNode.color===c?'#111':'transparent')"
+                        @click="newTimeNode.color=c"></span>
+                    </template>
+                  </div>
+                </div>
+                <div>
+                  <label class="field-label">排序</label>
+                  <input type="number" x-model="newTimeNode.sort_order" style="width:60px;" min="0" />
+                </div>
+                <button class="btn btn-success btn-sm" @click="createTimeNode()" :disabled="!newTimeNode.label||!newTimeNode.node_date">保存</button>
+                <button class="btn btn-outline btn-sm" @click="showAddTimeNode=false">取消</button>
+              </div>
+
+              <!-- 时间节点列表 + 统计 -->
+              <template x-if="timeNodes.length === 0">
+                <div style="text-align:center;padding:30px;color:#888;font-size:13px;">
+                  暂无时间节点，点击上方「添加时间节点」设置里程碑日期进行交期预测
+                </div>
+              </template>
+
+              <template x-if="timeNodes.length > 0">
+                <div>
+                  <!-- Tab 切换 -->
+                  <div style="display:flex;gap:0;margin-bottom:14px;border-bottom:2px solid #e5e7eb;">
+                    <button style="padding:6px 16px;border:none;background:none;cursor:pointer;font-size:13px;font-weight:600;"
+                      :style="tnView==='overview' ? 'color:#2563eb;border-bottom:2px solid #2563eb;margin-bottom:-2px;' : 'color:#6b7280;'"
+                      @click="tnView='overview';$nextTick(()=>renderTimeNodeChart())">总览</button>
+                    <button style="padding:6px 16px;border:none;background:none;cursor:pointer;font-size:13px;font-weight:600;"
+                      :style="tnView==='by_buyer' ? 'color:#2563eb;border-bottom:2px solid #2563eb;margin-bottom:-2px;' : 'color:#6b7280;'"
+                      @click="tnView='by_buyer';loadDrilldown('buyer_name')">按采购员</button>
+                    <button style="padding:6px 16px;border:none;background:none;cursor:pointer;font-size:13px;font-weight:600;"
+                      :style="tnView==='by_supplier' ? 'color:#2563eb;border-bottom:2px solid #2563eb;margin-bottom:-2px;' : 'color:#6b7280;'"
+                      @click="tnView='by_supplier';loadDrilldown('supplier')">按供应商</button>
+                  </div>
+
+                  <!-- 总览视图 -->
+                  <template x-if="tnView === 'overview'">
+                    <div>
+                      <div style="margin-bottom:16px;">
+                        <canvas id="chart-time-nodes" height="120"></canvas>
+                      </div>
+                      <div class="table-wrap">
+                        <table style="font-size:13px;">
+                          <thead>
+                            <tr>
+                              <th>节点</th>
+                              <th>日期</th>
+                              <th>到期物料</th>
+                              <th>已逾期</th>
+                              <th>未确认交期</th>
+                              <th>占比</th>
+                              <th>Top 供应商</th>
+                              <th style="width:80px;">操作</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <template x-for="(node, i) in timeNodeStats" :key="node.id">
+                              <tr>
+                                <td style="font-weight:600;">
+                                  <span style="display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;" :style="'background:'+(timeNodes.find(n=>n.id===node.id)?.color||'#2563eb')"></span>
+                                  <span x-text="node.label"></span>
+                                </td>
+                                <td x-text="node.node_date"></td>
+                                <td style="font-weight:600;" x-text="node.due_count"></td>
+                                <td x-text="node.overdue_count" :style="node.overdue_count>0?'color:#dc2626;font-weight:600':''"></td>
+                                <td x-text="node.no_eta_count"></td>
+                                <td>
+                                  <span x-text="node.total_open ? ((node.due_count/node.total_open*100).toFixed(1)+'%') : '—'"></span>
+                                </td>
+                                <td style="font-size:11px;max-width:200px;">
+                                  <template x-for="(s,si) in node.by_supplier" :key="si">
+                                    <span x-text="s.supplier+':'+s.cnt"></span>
+                                    <span x-show="si < node.by_supplier.length-1">, </span>
+                                  </template>
+                                  <span x-show="!node.by_supplier.length">—</span>
+                                </td>
+                                <td>
+                                  <button class="btn btn-outline btn-sm" @click="editTimeNode(node)" style="font-size:11px;padding:2px 6px;">编辑</button>
+                                  <button class="btn btn-danger btn-sm" @click="deleteTimeNode(node.id)" style="font-size:11px;padding:2px 6px;">删除</button>
+                                </td>
+                              </tr>
+                            </template>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </template>
+
+                  <!-- 按采购员视图 -->
+                  <template x-if="tnView === 'by_buyer'">
+                    <div>
+                      <div style="margin-bottom:16px;">
+                        <canvas id="chart-drilldown" height="200"></canvas>
+                      </div>
+                      <div class="table-wrap">
+                        <table style="font-size:13px;">
+                          <thead>
+                            <tr>
+                              <th>时间节点</th>
+                              <template x-for="g in drilldownGroups" :key="g">
+                                <th style="font-size:11px;" x-text="g"></th>
+                              </template>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <template x-for="node in drilldownData" :key="node.id">
+                              <tr>
+                                <td style="font-weight:600;white-space:nowrap;">
+                                  <span style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;" :style="'background:'+(timeNodes.find(n=>n.id===node.id)?.color||'#2563eb')"></span>
+                                  <span x-text="node.label"></span>
+                                </td>
+                                <template x-for="g in drilldownGroups" :key="g">
+                                  <td x-text="(node.groupMap[g]||0)" style="text-align:center;"></td>
+                                </template>
+                              </tr>
+                            </template>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </template>
+
+                  <!-- 按供应商视图 -->
+                  <template x-if="tnView === 'by_supplier'">
+                    <div>
+                      <div style="margin-bottom:16px;">
+                        <canvas id="chart-drilldown-supplier" height="200"></canvas>
+                      </div>
+                      <div class="table-wrap" style="max-height:400px;overflow-y:auto;">
+                        <table style="font-size:12px;">
+                          <thead>
+                            <tr>
+                              <th>时间节点</th>
+                              <template x-for="g in drilldownGroups" :key="g">
+                                <th style="font-size:10px;max-width:80px;overflow:hidden;text-overflow:ellipsis;" x-text="g"></th>
+                              </template>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <template x-for="node in drilldownData" :key="node.id">
+                              <tr>
+                                <td style="font-weight:600;white-space:nowrap;">
+                                  <span style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;" :style="'background:'+(timeNodes.find(n=>n.id===node.id)?.color||'#2563eb')"></span>
+                                  <span x-text="node.label"></span>
+                                </td>
+                                <template x-for="g in drilldownGroups" :key="g">
+                                  <td x-text="(node.groupMap[g]||0)" style="text-align:center;"></td>
+                                </template>
+                              </tr>
+                            </template>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top:16px;">
+            <div class="card-header"><h3>采购员催货统计</h3></div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>采购员</th><th>进行中</th><th>累计催货</th><th>已回复</th><th>回复率</th></tr></thead>
+                <tbody>
+                  <template x-for="r in chaseStats" :key="r.buyer_name">
+                    <tr>
+                      <td x-text="r.buyer_name||'未知'"></td>
+                      <td x-text="r.total"></td>
+                      <td x-text="r.total_chases"></td>
+                      <td x-text="r.replied"></td>
+                      <td x-text="r.total ? ((r.replied/r.total*100).toFixed(0)+'%') : '—'"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+
+
+    <!-- ════════ Chat ════════ -->
+    <template x-if="$store.nav.page === 'chat' && activeProject">
+      <div x-data="chat(activeProject.id)" style="display:flex;flex-direction:column;flex:1;min-height:0;">
+        <div class="topbar">
+          <span class="topbar-title">Chat</span>
+          <span style="font-size:12px;color:#888;">用自然语言查询物料、更新数据</span>
+        </div>
+        <div class="chat-messages" id="chat-scroll">
+          <template x-if="messages.length===0">
+            <div style="text-align:center;color:#888;padding:60px 20px;">
+              <div style="font-size:36px;margin-bottom:10px;">💬</div>
+              <div>你好！可以问我：哪些订单已逾期？哪些还没有确认交期？</div>
+            </div>
+          </template>
+          <template x-for="(msg, i) in messages" :key="i">
+            <div class="chat-msg" :class="msg.role">
+              <div class="chat-bubble" x-text="msg.content"></div>
+            </div>
+          </template>
+          <div x-show="loading" class="chat-msg assistant">
+            <div class="chat-bubble" style="color:#888;">正在思考…</div>
+          </div>
+        </div>
+        <div class="chat-input-bar">
+          <textarea x-model="input" @keydown="onKeydown($event)" placeholder="输入问题…（Enter 发送，Shift+Enter 换行）"></textarea>
+          <button class="btn btn-primary" @click="send()" :disabled="loading||!input.trim()">发送</button>
+        </div>
+      </div>
+    </template>
+
+
+    <!-- ════════ 导入 Excel ════════ -->
+    <template x-if="$store.nav.page === 'imports' && activeProject">
+      <div x-data="imports(activeProject.id)" style="display:flex;flex-direction:column;flex:1;min-height:0;">
+        <div class="topbar"><span class="topbar-title">导入 Excel</span></div>
+        <div class="content">
+          <div class="card" style="margin-bottom:16px;">
+            <div class="card-header"><h3>上传文件</h3></div>
+            <div class="card-body">
+              <div class="upload-zone"
+                :class="{'drag-over': dragging}"
+                @dragover.prevent="dragging=true"
+                @dragleave="dragging=false"
+                @drop.prevent="onDrop($event)"
+                @click="$refs.fileInput.click()"
+              >
+                <div style="font-size:40px;margin-bottom:8px;">📂</div>
+                <div>拖入 Excel 文件，或点击选择</div>
+                <div style="font-size:12px;color:#888;margin-top:4px;">支持 .xlsx / .xls（大小写均可）</div>
+              </div>
+              <input type="file" x-ref="fileInput" accept=".xlsx,.xls,.XLSX,.XLS" style="display:none;" @change="onFileInput($event)" />
+
+              <div x-show="loading" style="margin-top:12px;text-align:center;color:#888;">导入中…</div>
+
+              <template x-if="result">
+                <div style="margin-top:16px;">
+                  <div class="stat-grid">
+                    <div class="stat-card success"><div class="num" x-text="result.rows_added"></div><div class="label">新增行</div></div>
+                    <div class="stat-card primary"><div class="num" x-text="result.rows_updated"></div><div class="label">更新行</div></div>
+                    <div class="stat-card warning"><div class="num" x-text="result.rows_skipped"></div><div class="label">跳过行</div></div>
+                  </div>
+                  <template x-if="result.errors && result.errors.length">
+                    <div style="margin-top:12px;">
+                      <div style="font-weight:600;font-size:13px;color:#dc2626;margin-bottom:6px;">异常行（缺 PO/行号 或 数量=0）</div>
+                      <div style="border:1px solid #fecaca;border-radius:6px;overflow:auto;max-height:160px;">
+                        <table style="font-size:12px;width:100%;">
+                          <thead><tr style="background:#fef2f2;"><th style="padding:5px 10px;">Excel行</th><th>原因</th></tr></thead>
+                          <tbody>
+                            <template x-for="err in result.errors" :key="err.row">
+                              <tr><td style="padding:3px 10px;" x-text="err.row"></td><td x-text="err.reason"></td></tr>
+                            </template>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header"><h3>导入历史</h3></div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>文件</th><th>时间</th><th>新增</th><th>更新</th><th>跳过</th></tr></thead>
+                <tbody>
+                  <template x-for="h in history" :key="h.id">
+                    <tr>
+                      <td x-text="(h.file_path||'').split(/[/\\]/).pop()||'—'"></td>
+                      <td x-text="(h.imported_at||'').slice(0,16)"></td>
+                      <td x-text="h.rows_added"></td><td x-text="h.rows_updated"></td><td x-text="h.rows_skipped"></td>
+                    </tr>
+                  </template>
+                  <template x-if="history.length===0"><tr><td colspan="5" class="empty">暂无记录</td></tr></template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+
+
+    <!-- ════════ 设置 ════════ -->
+    <template x-if="$store.nav.page === 'settings'">
+      <div x-data="settings" style="display:flex;flex-direction:column;flex:1;min-height:0;overflow-y:auto;">
+        <div class="topbar"><span class="topbar-title">系统设置</span></div>
+        <div class="content">
+
+          <!-- API / 环境变量配置 -->
+          <div class="card" style="max-width:700px;margin-bottom:16px;">
+            <div class="card-header"><h3>环境变量（.env）</h3></div>
+            <div class="card-body">
+              <div style="font-size:12px;color:#888;margin-bottom:12px;">
+                支持任意键值对，常用：ANTHROPIC_API_KEY、LLM_MODEL、LLM_PROVIDER、CHASE_DEFAULT_MODE 等。
+                敏感字段显示为 *** 但仍可覆盖写入。
+              </div>
+              <table style="width:100%;font-size:13px;margin-bottom:12px;">
+                <thead><tr style="background:#f9fafb;"><th style="padding:6px 8px;text-align:left;">键</th><th style="text-align:left;">值</th></tr></thead>
+                <tbody>
+                  <template x-for="[k, v] in envEntries" :key="k">
+                    <tr style="border-bottom:1px solid #f3f4f6;">
+                      <td style="padding:4px 8px;font-weight:600;width:220px;" x-text="k"></td>
+                      <td><input type="text" x-model="envVars[k]" style="width:100%;border:none;padding:3px 6px;background:transparent;font-size:12px;" /></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
+                <input type="text" x-model="newKey" placeholder="新键名（如 MY_API_KEY）" style="width:200px;" />
+                <input type="text" x-model="newVal" placeholder="值" style="flex:1;" />
+              </div>
+              <button class="btn btn-primary btn-sm" @click="saveEnv()" :disabled="loading">
+                <span x-text="loading ? '保存中…' : '💾 保存 .env'"></span>
+              </button>
+            </div>
+          </div>
+
+          <!-- 采购组 PGR 配置 -->
+          <div class="card" style="max-width:700px;">
+            <div class="card-header"><h3>采购组人员配置（PGR）</h3></div>
+            <div class="card-body">
+              <div style="font-size:12px;color:#888;margin-bottom:12px;">
+                人员变动时直接在此修改，立即生效（下次导入 Excel 时读取）。
+              </div>
+              <table style="width:100%;font-size:13px;margin-bottom:12px;">
+                <thead><tr style="background:#f9fafb;">
+                  <th style="padding:6px 8px;text-align:left;width:80px;">代码</th>
+                  <th style="text-align:left;width:140px;">姓名</th>
+                  <th style="text-align:left;">邮箱</th>
+                  <th style="width:60px;"></th>
+                </tr></thead>
+                <tbody>
+                  <template x-for="[k, v] in pgrEntries" :key="k">
+                    <tr style="border-bottom:1px solid #f3f4f6;">
+                      <td style="padding:4px 8px;font-weight:600;" x-text="k"></td>
+                      <td><input type="text" x-model="pgr[k].name" style="width:100%;border:none;padding:3px;font-size:12px;background:transparent;" /></td>
+                      <td><input type="text" x-model="pgr[k].email" style="width:100%;border:none;padding:3px;font-size:12px;background:transparent;" /></td>
+                      <td style="white-space:nowrap;">
+                        <button class="btn btn-outline btn-sm" @click="savePgr(k, pgr[k])">保存</button>
+                        <button class="btn btn-danger btn-sm" @click="deletePgr(k)">删除</button>
+                      </td>
+                    </tr>
+                  </template>
+                  <template x-if="pgrEntries.length===0">
+                    <tr><td colspan="4" class="empty" style="padding:20px;">暂无配置，在下方添加</td></tr>
+                  </template>
+                </tbody>
+              </table>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <input type="text" x-model="newPg.key" placeholder="代码（如 ABC）" style="width:80px;" maxlength="3" />
+                <input type="text" x-model="newPg.name" placeholder="姓名" style="width:120px;" />
+                <input type="text" x-model="newPg.email" placeholder="邮箱" style="flex:1;" />
+                <button class="btn btn-primary btn-sm" @click="addPgr()">添加</button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </template>
+
+  </div><!-- /main -->
+</div><!-- /app -->
+
+</body>
+</html>

@@ -1,0 +1,204 @@
+# ===================================================================
+# ChaseBase Excel 列别名映射
+# 基于实际 SAP 采购报表（1515.xlsx）的列头
+# 匹配规则：trim + 大小写不敏感 + 全半角统一
+# 未匹配列 → extra_json，不丢数据
+# ===================================================================
+
+po_number:
+  - Document number
+  - Document Number
+  - PO号
+  - PO Number
+  - PO No
+  - PO No.
+  - 采购订单号
+  - 订单号
+  - PO#
+  - Purchase Order
+
+item_no:
+  - Item
+  - Item No
+  - Item No.
+  - 行号
+  - Line
+  - Line No
+  - Line No.
+  - 项次
+
+wbs_element:
+  - WBS Element
+  - WBS
+  - WBS element
+  - WBS 编码
+  - WBS号
+
+purchasing_group:
+  - Purchasing Group
+  - Purch. Group
+  - Purch Group
+  - PG
+  - 采购组
+  - New PGr.
+
+part_no:
+  - Material
+  - Material Number
+  - Material No
+  - 物料号
+  - 料号
+  - Part No
+  - Part Number
+  - 物料编码
+
+description:
+  - Short Text
+  - Description
+  - Material Description
+  - 物料描述
+  - 描述
+  - 品名
+  - 物料名称
+
+quantity:
+  - Order Quantity
+  - Qty
+  - Quantity
+  - 数量
+  - 订单数量
+
+unit:
+  - Order Unit
+  - Unit
+  - UOM
+  - 单位
+  - 计量单位
+
+supplier:
+  - Name 1
+  - Vendor Name
+  - Supplier
+  - Supplier Name
+  - 供应商
+  - 厂商
+  - 供应商名称
+
+order_date:
+  - Document Date
+  - Order Date
+  - 下单日期
+  - 订单日期
+
+current_eta:
+  - Confirmed Del. Date
+  - Confirmed Delivery Date
+  - Confirmed Del Date
+  - Delivery Date
+  - Del. Date
+  - Current ETA
+  - 当前交期
+  - 确认交期
+  - 预计到货日期
+  - 交货期
+
+original_eta:
+  - First confirmed DelDate
+  - Original ETA
+  - Plan Date
+  - 原交期
+  - 计划交期
+  - 原始交期
+
+supplier_eta:
+  - Supplier ETA
+  - Confirmed ETA
+  - 供应商交期
+  - 供应商反馈交期
+
+supplier_remarks:
+  - Remarks
+  - Supplier Remarks
+  - 备注
+  - 供应商备注
+  - 反馈备注
+
+buyer_name:
+  - Buyer
+  - Buyer Name
+  - 采购员
+  - 采购负责人
+
+buyer_email:
+  - Buyer Email
+  - 采购员邮箱
+  - 邮箱
+
+status:
+  - Status
+  - 状态
+  - 订单状态
+
+plant:
+  - Plant
+  - 工厂
+  - 工厂代码
+
+supplier_code:
+  - Supplier
+  - Vendor
+  - Vendor No
+  - Vendor No.
+  - 供应商编号
+  - 供应商代码
+
+statical_delivery_date:
+  - Statical Delivery Date
+  - Stat. Del. Date
+  - 静态交期
+
+manufacturer:
+  - Manufacturer
+  - 制造商
+  - 生产商
+
+manufacturer_part_no:
+  - Manufacturer Part No.
+  - Manufacturer Part No
+  - MFR Part No
+  - 制造商料号
+  - 厂商型号
+
+open_quantity_gr:
+  - Open quantity GR
+  - Open Qty GR
+  - 未交数量
+  - 未交货数量
+
+net_order_price:
+  - Net Order Price
+  - Net Price
+  - 净价
+  - 单价
+
+currency:
+  - Currency for Purchasing document in docu
+  - Currency
+  - 货币
+  - 币种
+
+net_order_value:
+  - Net Order Value
+  - Order Value
+  - 订单金额
+  - 金额
+
+position_text1:
+  - Position Text1
+  - Text1
+  - 项目文本1
+
+position_text2:
+  - Position Text2
+  - Text2
+  - 项目文本2
