@@ -4,12 +4,78 @@ from datetime import datetime
 import json
 from app.db.connection import get_connection
 from app.services.llm_client import parse_email_for_eta
+from app.services.material_view import derive_material_state
 from app.update_policy import bulk_update_fields
+
+
+def _enrich_items(conn, items: list) -> list:
+    """
+    For each extracted item, query the materials table and attach
+    matched: {material_id, part_no, supplier, current_eta, state_label}
+    or matched: null if no row is found.
+    """
+    enriched = []
+    for item in items:
+        po_number = (item.get("po_number") or "").strip()
+        item_no   = (item.get("item_no")   or "").strip()
+
+        mat_row = None
+
+        if po_number and item_no:
+            # 1. Exact match
+            mat_row = conn.execute(
+                "SELECT id, part_no, supplier, current_eta, open_quantity_gr "
+                "FROM materials WHERE po_number=? AND item_no=?",
+                (po_number, item_no),
+            ).fetchone()
+
+            if not mat_row:
+                # 2. Fuzzy: leading-zero difference (cast both sides to INTEGER)
+                mat_row = conn.execute(
+                    "SELECT id, part_no, supplier, current_eta, open_quantity_gr "
+                    "FROM materials "
+                    "WHERE CAST(po_number AS INTEGER)=CAST(? AS INTEGER) AND item_no=?",
+                    (po_number, item_no),
+                ).fetchone()
+
+        elif po_number and not item_no:
+            # PO only — take first match
+            mat_row = conn.execute(
+                "SELECT id, part_no, supplier, current_eta, open_quantity_gr "
+                "FROM materials WHERE po_number=? LIMIT 1",
+                (po_number,),
+            ).fetchone()
+
+            if not mat_row:
+                mat_row = conn.execute(
+                    "SELECT id, part_no, supplier, current_eta, open_quantity_gr "
+                    "FROM materials "
+                    "WHERE CAST(po_number AS INTEGER)=CAST(? AS INTEGER) LIMIT 1",
+                    (po_number,),
+                ).fetchone()
+
+        if mat_row:
+            state = derive_material_state(dict(mat_row))
+            matched = {
+                "material_id":  mat_row["id"],
+                "part_no":      mat_row["part_no"],
+                "supplier":     mat_row["supplier"],
+                "current_eta":  mat_row["current_eta"],
+                "state_label":  state["label"],
+                "state_code":   state["code"],
+            }
+        else:
+            matched = None
+
+        enriched.append({**item, "matched": matched})
+
+    return enriched
 
 
 def parse_inbound_email(email_id: int, project_id: str = "default") -> dict:
     """
     Call LLM to parse a supplier reply email, extracting per-item ETA data.
+    Each item is then enriched with matched material info from the DB.
     Result stored in llm_extracted_json; status set to pending_confirm.
     """
     conn = get_connection(project_id)
@@ -19,6 +85,11 @@ def parse_inbound_email(email_id: int, project_id: str = "default") -> dict:
             return {"ok": False, "reason": "email not found"}
 
         extracted = parse_email_for_eta(row["subject"] or "", row["body"] or "")
+
+        # Enrich each item with matched material info
+        if extracted.get("items"):
+            extracted["items"] = _enrich_items(conn, extracted["items"])
+
         conn.execute(
             "UPDATE inbound_emails SET llm_extracted_json=?, status='pending_confirm' WHERE id=?",
             (json.dumps(extracted, ensure_ascii=False), email_id),
@@ -47,33 +118,57 @@ def _apply_single_item(conn, item: dict, source_ref, now_iso: str) -> dict:
             "reason": "po_number and item_no both empty; cannot auto-match",
         }
 
-    # Exact match first
-    mat_row = conn.execute(
-        "SELECT id, chase_count FROM materials WHERE po_number=? AND item_no=?",
-        (po_number, item_no),
-    ).fetchone()
+    # Use pre-matched material_id from enrichment if available
+    matched = item.get("matched")
+    mat_id = None
+    chase_count = 0
 
-    # Fallback: po only (when item_no not identified)
-    if not mat_row and po_number and not item_no:
+    if matched and matched.get("material_id"):
+        mat_id = matched["material_id"]
         mat_row = conn.execute(
-            "SELECT id, chase_count FROM materials WHERE po_number=? LIMIT 1",
-            (po_number,),
+            "SELECT id, chase_count FROM materials WHERE id=?", (mat_id,)
+        ).fetchone()
+        if mat_row:
+            chase_count = int(mat_row["chase_count"] or 0)
+        else:
+            mat_id = None  # stale reference, fall through to DB lookup
+
+    if not mat_id:
+        # Exact match
+        mat_row = conn.execute(
+            "SELECT id, chase_count FROM materials WHERE po_number=? AND item_no=?",
+            (po_number, item_no),
         ).fetchone()
 
-    if not mat_row:
-        return {
-            "status": "unmatched", "material_id": None,
-            "po_number": po_number or None, "item_no": item_no or None,
-            "new_eta": new_eta, "remarks": remarks,
-            "reason": f"No material found for PO={po_number} item={item_no}",
-        }
+        # Fallback: leading-zero difference
+        if not mat_row and po_number:
+            mat_row = conn.execute(
+                "SELECT id, chase_count FROM materials "
+                "WHERE CAST(po_number AS INTEGER)=CAST(? AS INTEGER) AND item_no=?",
+                (po_number, item_no),
+            ).fetchone()
 
-    mat_id = mat_row["id"]
-    feedback_chase_count = int(mat_row["chase_count"] or 0)
+        # Fallback: po only (when item_no not identified)
+        if not mat_row and po_number and not item_no:
+            mat_row = conn.execute(
+                "SELECT id, chase_count FROM materials WHERE po_number=? LIMIT 1",
+                (po_number,),
+            ).fetchone()
+
+        if not mat_row:
+            return {
+                "status": "unmatched", "material_id": None,
+                "po_number": po_number or None, "item_no": item_no or None,
+                "new_eta": new_eta, "remarks": remarks,
+                "reason": f"No material found for PO={po_number} item={item_no}",
+            }
+
+        mat_id = mat_row["id"]
+        chase_count = int(mat_row["chase_count"] or 0)
 
     updates = {
         "supplier_feedback_time":    now_iso,
-        "last_feedback_chase_count": feedback_chase_count,
+        "last_feedback_chase_count": chase_count,
     }
     if new_eta:
         updates["supplier_eta"] = new_eta
@@ -105,7 +200,7 @@ def apply_inbound_decision(
       "manual" - mark for manual handling
 
     edits (optional): override extracted content; supports {"items": [...]} to
-      replace the items list with human-corrected values.
+      replace the items list with human-corrected/selected values.
 
     Returns: {ok, email_id, decision, applied: [...], unmatched: [...]}
     """

@@ -143,36 +143,83 @@ def _call_openai_compat(system: str, user: str, model: str, max_tokens: int) -> 
 
 def parse_email_for_eta(email_subject: str, email_body: str) -> dict:
     """
-    Extract delivery date info from supplier reply email (multi-line support).
+    Extract structured delivery info from unstructured supplier reply emails.
+
+    Handles Chinese informal text, relative dates (今天/明天), and general
+    statements that apply to all items.
 
     Returns:
-      {"items": [{"po_number": str|None, "item_no": str|None,
-                  "new_eta": "YYYY-MM-DD"|None, "remarks": str}],
-       "general_remarks": str, "confidence": float}
+      {
+        "items": [
+          {"po_number": str|None, "item_no": str|None,
+           "new_eta": "YYYY-MM-DD"|None, "remarks": str}
+        ],
+        "general_remarks": str,
+        "confidence": float
+      }
     """
+    from datetime import date, timedelta
+    today      = date.today()
+    today_str  = today.isoformat()
+    tomorrow   = (today + timedelta(days=1)).isoformat()
+    day_after  = (today + timedelta(days=2)).isoformat()
+    today_mmdd = today.strftime("%m/%d")
+    tmr_mmdd   = (today + timedelta(days=1)).strftime("%m/%d")
+
     sys_lines = [
-        "You are a procurement assistant. Extract delivery date information from supplier reply emails.",
-        "The email may contain delivery dates for multiple PO line items.",
+        "You are a procurement assistant. Extract structured delivery information from supplier reply emails.",
+        "Emails are often in informal Chinese. Extract PO numbers, item numbers, ETAs, and remarks.",
         "",
-        "Return ONLY valid JSON:",
-        '{"items":[{"po_number":"str or null","item_no":"str or null","new_eta":"YYYY-MM-DD or null","remarks":"str"}],"general_remarks":"str","confidence":0.0}',
+        f"TODAY = {today_str}  (use this to resolve relative dates)",
+        f'Relative date mapping: "今天"="{today_str}", "明天"="{tomorrow}", "后天"="{day_after}"',
+        '"月底" = last day of current month. "下周" = next Monday.',
         "",
-        "Rules:",
-        "- One entry per distinct PO line item.",
-        "- If only a general date (no specific items), use po_number=null and item_no=null.",
-        "- new_eta must be YYYY-MM-DD or null.",
-        "- confidence: 0.0-1.0.",
-        "- Output JSON only, no extra text.",
+        "PO NUMBER rules:",
+        "- PO is typically an 8-digit number (may have leading zeros, e.g. 0080386542)",
+        '- May be prefixed with "PO", "采购单", or appear bare',
+        "- Preserve the number exactly as written (keep leading zeros if present)",
+        "",
+        "ITEM NUMBER rules:",
+        '- Item is typically a number ending in 0 (e.g. 10, 20, 40, 100)',
+        '- May be prefixed with "ITEM", "item", "行", "项", or appear right after PO number',
+        "",
+        "GENERAL STATEMENT rules:",
+        '- If supplier gives ONE date for ALL items (e.g. "全部明天到", "以上物料周五发货"):',
+        "  1. Set general_remarks to a summary like '明天（MM/DD）可到'",
+        "  2. Apply that ETA and remark to EVERY identified item in items[]",
+        "- If no items are individually identified, create one entry with po_number=null, item_no=null",
+        "",
+        "REMARKS rules:",
+        '- Convert relative dates in remarks to concrete form: e.g. "明天" → "明天（MM/DD）"',
+        '- Keep short: max 30 Chinese characters',
+        "",
+        "Output ONLY valid JSON:",
+        '{"items":[{"po_number":"str|null","item_no":"str|null","new_eta":"YYYY-MM-DD|null","remarks":"str"}],"general_remarks":"str","confidence":0.0}',
+        "",
+        "--- FEW-SHOT EXAMPLES ---",
+        "",
+        "Input: '80386456 10项今天交'",
+        f'{{"items":[{{"po_number":"80386456","item_no":"10","new_eta":"{today_str}","remarks":"今天（{today_mmdd}）交货"}}],"general_remarks":"","confidence":0.95}}',
+        "",
+        "Input: '0080386542 ITEM20 已发 明天到\\nPO 80386542 ITEM 40 供应商还没回复'",
+        f'{{"items":[{{"po_number":"0080386542","item_no":"20","new_eta":"{tomorrow}","remarks":"已发，明天（{tmr_mmdd}）到"}},{{"po_number":"80386542","item_no":"40","new_eta":null,"remarks":"供应商还没回复"}}],"general_remarks":"","confidence":0.88}}',
+        "",
+        f"Input: 'PO 12345678和87654321全部明天（{tmr_mmdd}）能到'",
+        f'{{"items":[{{"po_number":"12345678","item_no":null,"new_eta":"{tomorrow}","remarks":"明天（{tmr_mmdd}）可到"}},{{"po_number":"87654321","item_no":null,"new_eta":"{tomorrow}","remarks":"明天（{tmr_mmdd}）可到"}}],"general_remarks":"明天（{tmr_mmdd}）可到","confidence":0.85}}',
+        "",
+        "--- END EXAMPLES ---",
+        "Output JSON only. No markdown, no extra text.",
     ]
     system = "\n".join(sys_lines)
-    user = "Subject: " + email_subject + "\n\nBody:\n" + email_body[:3000]
-    raw = call_llm(system, user, response_format="json")
+    user   = f"Subject: {email_subject}\n\nBody:\n{email_body[:3000]}"
+    raw    = call_llm(system, user, response_format="json")
 
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
         return {
-            "items": [{"po_number": None, "item_no": None, "new_eta": None, "remarks": raw[:300]}],
+            "items": [{"po_number": None, "item_no": None,
+                       "new_eta": None, "remarks": raw[:300]}],
             "general_remarks": "",
             "confidence": 0.1,
         }
@@ -182,11 +229,13 @@ def parse_email_for_eta(email_subject: str, email_body: str) -> dict:
         item_nos = parsed.get("item_nos") or [None]
         parsed = {
             "items": [
-                {"po_number": parsed.get("po_number"), "item_no": str(i) if i else None,
-                 "new_eta": parsed.get("new_eta"), "remarks": parsed.get("remarks", "")}
+                {"po_number": parsed.get("po_number"),
+                 "item_no":   str(i) if i else None,
+                 "new_eta":   parsed.get("new_eta"),
+                 "remarks":   parsed.get("remarks", "")}
                 for i in item_nos
             ],
-            "general_remarks": "",
+            "general_remarks": parsed.get("remarks", ""),
             "confidence": parsed.get("confidence", 0.5),
         }
 

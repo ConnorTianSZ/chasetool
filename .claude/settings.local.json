@@ -19,7 +19,14 @@
       "Bash(python -c \"import ast; ast.parse\\(open\\('app/tools/chase_email.py'\\).read\\(\\)\\); print\\('chase_email.py OK'\\)\")",
       "Bash(python -c \"import ast; ast.parse\\(open\\('app/api/chase.py', encoding='utf-8'\\).read\\(\\)\\); print\\('chase.py OK'\\)\")",
       "Bash(python -c \"import ast; ast.parse\\(open\\('app/tools/chase_email.py', encoding='utf-8'\\).read\\(\\)\\); print\\('chase_email.py OK'\\)\")",
-      "Bash(python -c \"import ast; ast.parse\\(open\\('app/api/chat.py', encoding='utf-8'\\).read\\(\\)\\); print\\('chat.py OK'\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app/api/chat.py', encoding='utf-8'\\).read\\(\\)\\); print\\('chat.py OK'\\)\")",
+      "Bash(pip config *)",
+      "Bash(python -m pip config debug)",
+      "Bash(python -m pip install --index-url https://pypi.org/simple/ fastapi==0.115.5)",
+      "Bash(git diff *)",
+      "Bash(echo \"exit: $?\")",
+      "WebFetch(domain:github.com)",
+      "Bash(git log *)"
     ]
   }
 }

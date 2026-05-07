@@ -417,8 +417,8 @@
             <option value="new">未解析</option>
             <option value="pending_confirm">待确认</option>
             <option value="applied">已入库</option>
-            <option value="rejected">已拒绝</option>
-            <option value="escalate">已升级</option>
+            <option value="ignored">已忽略</option>
+            <option value="manual">手动处理</option>
           </select>
         </div>
 
@@ -471,41 +471,102 @@
                     'badge-open':      item.status==='new',
                     'badge-on_hold':   item.status==='pending_confirm',
                     'badge-delivered': item.status==='applied',
-                    'badge-cancelled': item.status==='rejected'||item.status==='escalate'
+                    'badge-cancelled': item.status==='ignored'||item.status==='manual'||item.status==='rejected'||item.status==='escalate'
                   }"
-                  x-text="item.status"></span>
+                  x-text="{new:'未解析',pending_confirm:'待确认',applied:'已入库',ignored:'已忽略',manual:'手动处理'}[item.status]||item.status"></span>
               </div>
 
               <div class="inbox-card-body">
                 <div class="inbox-email-panel" x-text="item.body"></div>
                 <div class="inbox-parsed-panel">
+                  <!-- ── 解析结果：逐行审批表 ── -->
                   <template x-if="item.llm_extracted_json">
                     <div>
-                      <div class="field-row">
-                        <span class="field-label">新交期</span>
-                        <input type="date" x-model="item._eta_edit" :placeholder="item.llm_extracted_json?.new_eta||''" style="flex:1;" />
+                      <!-- 汇总行：general_remarks + 置信度 -->
+                      <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;font-size:12px;">
+                        <template x-if="item.llm_extracted_json.general_remarks">
+                          <span style="color:#374151;">📋 <strong x-text="item.llm_extracted_json.general_remarks"></strong></span>
+                        </template>
+                        <span style="color:#9ca3af;" x-text="'置信度 ' + ((item.llm_extracted_json.confidence||0)*100).toFixed(0)+'%'"></span>
                       </div>
-                      <div class="field-row">
-                        <span class="field-label">备注</span>
-                        <input type="text" x-model="item._remarks_edit" :placeholder="item.llm_extracted_json?.remarks||''" style="flex:1;" />
-                      </div>
-                      <div class="field-row">
-                        <span class="field-label">置信度</span>
-                        <span style="color:#888;font-size:12px;" x-text="((item.llm_extracted_json?.confidence||0)*100).toFixed(0)+'%'"></span>
+                      <!-- 逐行物料审批表 -->
+                      <div style="overflow-x:auto;">
+                        <table class="eta-review-table">
+                          <thead>
+                            <tr>
+                              <th style="width:28px;text-align:center;">☑</th>
+                              <th>PO号</th>
+                              <th>行号</th>
+                              <th>提取交期</th>
+                              <th style="min-width:140px;">提取备注</th>
+                              <th>物料号</th>
+                              <th>供应商</th>
+                              <th>当前交期</th>
+                              <th>状态</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <template x-for="(ei, idx) in (item.llm_extracted_json.items||[])" :key="idx">
+                              <tr :class="item._itemSelections?.[idx]?.selected===false ? 'row-deselected' : ''">
+                                <td style="text-align:center;">
+                                  <input type="checkbox"
+                                    :checked="item._itemSelections?.[idx]?.selected !== false"
+                                    @change="if(item._itemSelections?.[idx]) item._itemSelections[idx].selected = $event.target.checked" />
+                                </td>
+                                <td x-text="ei.po_number||'—'"></td>
+                                <td x-text="ei.item_no||'—'"></td>
+                                <td>
+                                  <input type="date" class="inline-input"
+                                    :value="item._itemSelections?.[idx]?.new_eta"
+                                    @input="if(item._itemSelections?.[idx]) item._itemSelections[idx].new_eta = $event.target.value"
+                                    style="width:110px;" />
+                                </td>
+                                <td>
+                                  <input type="text" class="inline-input"
+                                    :value="item._itemSelections?.[idx]?.remarks"
+                                    @input="if(item._itemSelections?.[idx]) item._itemSelections[idx].remarks = $event.target.value"
+                                    style="width:100%;min-width:120px;" />
+                                </td>
+                                <td x-text="ei.matched?.part_no||'—'"></td>
+                                <td x-text="ei.matched?.supplier||'—'"></td>
+                                <td x-text="ei.matched?.current_eta||'—'"></td>
+                                <td>
+                                  <template x-if="ei.matched">
+                                    <span class="badge badge-sm"
+                                      :class="{
+                                        'badge-no-eta':   ei.matched.state_code==='no_oc',
+                                        'badge-overdue':  ei.matched.state_code==='overdue',
+                                        'badge-open':     ei.matched.state_code==='normal',
+                                        'badge-delivered':ei.matched.state_code==='delivered'
+                                      }"
+                                      x-text="ei.matched.state_label"></span>
+                                  </template>
+                                  <template x-if="!ei.matched">
+                                    <span class="badge badge-sm badge-cancelled">未匹配</span>
+                                  </template>
+                                </td>
+                              </tr>
+                            </template>
+                          </tbody>
+                        </table>
                       </div>
                     </div>
                   </template>
                   <template x-if="!item.llm_extracted_json">
-                    <div style="color:#888;font-size:12px;padding-top:10px;">点击「解析」提取交期信息</div>
+                    <div style="color:#9ca3af;font-size:12px;padding:10px 0;">点击「🤖 解析」提取交期信息</div>
                   </template>
                 </div>
               </div>
 
               <div class="inbox-card-footer">
-                <button class="btn btn-outline btn-sm" @click="parse(item)" x-show="item.status==='new'">🤖 解析</button>
-                <button class="btn btn-success btn-sm" @click="decide(item,'apply')"   x-show="item.status==='pending_confirm'">✅ 接受入库</button>
-                <button class="btn btn-outline btn-sm" @click="decide(item,'reject')"  x-show="item.status==='pending_confirm'">❌ 拒绝</button>
-                <button class="btn btn-danger  btn-sm" @click="decide(item,'escalate')" x-show="item.status==='pending_confirm'">🚨 升级</button>
+                <button class="btn btn-outline btn-sm" @click="parse(item)"
+                  x-show="item.status==='new' || item.status==='pending_confirm'">🤖 解析</button>
+                <button class="btn btn-success btn-sm" @click="decide(item,'apply')"
+                  x-show="item.status==='pending_confirm'">✅ 入库选中行</button>
+                <button class="btn btn-outline btn-sm" @click="decide(item,'ignore')"
+                  x-show="item.status==='pending_confirm'">🚫 忽略</button>
+                <button class="btn btn-danger  btn-sm" @click="decide(item,'manual')"
+                  x-show="item.status==='pending_confirm'">📋 转手动</button>
               </div>
             </div>
           </template>

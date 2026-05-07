@@ -315,7 +315,19 @@ document.addEventListener('alpine:init', () => {
         const p = new URLSearchParams({ limit: 20, offset: (this.page - 1) * 20 });
         if (this.statusFilter) p.set('status', this.statusFilter);
         const data = await api('GET', this.purl('/inbox/list?') + p);
-        this.items = data.items; this.total = data.total;
+        // Parse llm_extracted_json string → object and init per-item selections
+        this.items = data.items.map(it => {
+          if (it.llm_extracted_json && typeof it.llm_extracted_json === 'string') {
+            try { it.llm_extracted_json = JSON.parse(it.llm_extracted_json); } catch(e) {}
+          }
+          it._itemSelections = (it.llm_extracted_json?.items || []).map(ei => ({
+            selected: true,
+            new_eta:  ei.new_eta  || '',
+            remarks:  ei.remarks  || '',
+          }));
+          return it;
+        });
+        this.total = data.total;
       } catch (e) { toast(e.message, 'error'); }
       finally { this.loading = false; }
     },
@@ -351,18 +363,42 @@ document.addEventListener('alpine:init', () => {
       try {
         const r = await api('POST', this.purl(`/inbox/${item.id}/parse`));
         item.llm_extracted_json = r.extracted;
+        // Init per-item checkbox + editable fields
+        item._itemSelections = (r.extracted?.items || []).map(ei => ({
+          selected: true,
+          new_eta:  ei.new_eta  || '',
+          remarks:  ei.remarks  || '',
+        }));
         item.status = 'pending_confirm';
-        toast('解析完成，请确认', 'info');
+        toast(`解析完成，共 ${r.extracted?.items?.length || 0} 条，请确认`, 'info');
       } catch (e) { toast(e.message, 'error'); }
     },
 
     async decide(item, decision) {
       try {
-        const edits = {};
-        if (item._eta_edit)     edits.new_eta  = item._eta_edit;
-        if (item._remarks_edit) edits.remarks   = item._remarks_edit;
+        let edits = undefined;
+        if (decision === 'apply' && item.llm_extracted_json?.items?.length) {
+          // Collect only selected items with any edits applied
+          const selectedItems = item.llm_extracted_json.items
+            .map((ei, i) => {
+              const sel = item._itemSelections?.[i];
+              if (sel && !sel.selected) return null;
+              return {
+                po_number: ei.po_number,
+                item_no:   ei.item_no,
+                new_eta:   (sel?.new_eta  || ei.new_eta)  || null,
+                remarks:   (sel?.remarks !== undefined ? sel.remarks : ei.remarks) || '',
+                matched:   ei.matched,
+              };
+            })
+            .filter(Boolean);
+          if (!selectedItems.length) {
+            toast('请至少勾选一条记录', 'error'); return;
+          }
+          edits = { items: selectedItems };
+        }
         await api('POST', this.purl(`/inbox/${item.id}/decide`), { decision, edits });
-        toast({ apply:'已入库', reject:'已拒绝', escalate:'已升级' }[decision] || decision, 'success');
+        toast({ apply:'已入库', ignore:'已忽略', manual:'已转手动处理' }[decision] || decision, 'success');
         this.load();
       } catch (e) { toast(e.message, 'error'); }
     },
@@ -633,7 +669,7 @@ document.addEventListener('alpine:init', () => {
 
   // ── 设置 ─────────────────────────────────────────────────────────
   Alpine.data('settings', () => ({
-    envVars: {},        // 所有 env 键值对
+    envVars: {},
     newKey: '', newVal: '',
     pgr: {},
     newPg: { key: '', name: '', email: '' },

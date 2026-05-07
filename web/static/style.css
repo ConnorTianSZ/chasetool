@@ -175,14 +175,21 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); }
 /* ── 收件箱 ── */
 .inbox-card { border: 1px solid var(--gray-200); border-radius: var(--radius); overflow: hidden; margin-bottom: 10px; }
 .inbox-card-header { padding: 9px 14px; background: var(--gray-50); display: flex; align-items: center; gap: 8px; font-size: 13px; }
-.inbox-card-body   { display: flex; }
-.inbox-email-panel { flex: 3; padding: 12px 14px; border-right: 1px solid var(--gray-200); font-size: 12px; white-space: pre-wrap; max-height: 180px; overflow-y: auto; color: var(--gray-700); }
-.inbox-parsed-panel { flex: 2; padding: 12px 14px; }
-.inbox-parsed-panel .field-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
-.inbox-parsed-panel .field-label { width: 70px; color: var(--gray-500); font-size: 12px; flex-shrink: 0; }
-.inbox-parsed-panel input { flex: 1; }
+.inbox-card-body   { display: flex; flex-direction: column; }
+.inbox-email-panel { padding: 10px 14px; border-bottom: 1px solid var(--gray-200); font-size: 12px; white-space: pre-wrap; max-height: 140px; overflow-y: auto; color: var(--gray-700); background: var(--gray-50); }
+.inbox-parsed-panel { padding: 10px 14px; }
 .inbox-card-footer { padding: 8px 14px; border-top: 1px solid var(--gray-200); display: flex; gap: 8px; justify-content: flex-end; }
 .pull-hint { font-size: 12px; color: var(--gray-500); white-space: nowrap; }
+
+/* ── ETA 审批表格 ── */
+.eta-review-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.eta-review-table th { background: var(--gray-100); color: var(--gray-600); font-weight: 600; padding: 5px 8px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--gray-200); }
+.eta-review-table td { padding: 4px 8px; border-bottom: 1px solid var(--gray-100); vertical-align: middle; }
+.eta-review-table tr:last-child td { border-bottom: none; }
+.eta-review-table tr.row-deselected td { opacity: 0.38; }
+.inline-input { border: 1px solid var(--gray-200); border-radius: 4px; padding: 2px 5px; font-size: 12px; background: #fff; width: 100%; box-sizing: border-box; }
+.inline-input:focus { outline: none; border-color: var(--primary); }
+.badge-sm { font-size: 10px; padding: 1px 6px; }
 
 /* ── Chat ── */
 .chat-messages  { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; background: var(--gray-50); }
