@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 from app.db.connection import get_connection
-from app.services.email_marker import ChaseMarker
+from app.services.email_marker import ChaseMarker, LegacyChaseMarker
 from app.config import get_settings
 
 _outlook_app = None
@@ -28,8 +28,8 @@ def send_chase_email(
     subject:      str,
     body:         str,
     material_ids: list[int],
-    marker:       ChaseMarker,
-    mode:         Literal["draft", "send"] | None = None,
+    marker,
+    mode         = None,
     project_id:   str = "default",
     is_html:      bool = False,
 ) -> dict:
@@ -56,49 +56,52 @@ def send_chase_email(
         entry_id = mail.EntryID
         method = "draft"
 
+    marker_tag = None
+    if marker is not None:
+        marker_tag = marker.to_subject_tag()
+
     conn = get_connection(project_id)
     try:
         cur = conn.execute(
             "INSERT INTO chase_log "
             "(material_ids_json, to_address, cc, subject, body, method, "
-            " outlook_entry_id, sent_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            " outlook_entry_id, marker_tag, sent_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 json.dumps(material_ids),
                 to_address, cc, subject, body, method,
                 entry_id,
+                marker_tag,
                 datetime.utcnow().isoformat(),
             ),
         )
         log_id = cur.lastrowid
+        now_iso = datetime.utcnow().isoformat()
         for mid in material_ids:
             conn.execute(
                 "UPDATE materials SET last_chased_at=?, chase_count=chase_count+1 WHERE id=?",
-                (datetime.utcnow().isoformat(), mid),
+                (now_iso, mid),
             )
         conn.commit()
     finally:
         conn.close()
 
-    return {"ok": True, "method": method, "chase_log_id": log_id}
+    return {"ok": True, "method": method, "chase_log_id": log_id, "marker_tag": marker_tag}
 
 
-def build_chase_subject(marker: "ChaseMarker") -> str:
-    """Build a chase email subject line from a ChaseMarker."""
+def build_chase_subject(marker) -> str:
     tag = marker.to_subject_tag()
+    if isinstance(marker, ChaseMarker):
+        if marker.is_oc:
+            return f"{tag} OC Confirmation / 请确认订单交期"
+        else:
+            return f"{tag} Urgent Delivery / 请加急确认最新交期"
     return f"{tag} Delivery Chase / 请确认交货期"
 
 
-def build_email_body(
-    template_type: str,
-    materials: list[dict],
-    key_date: str = "",
-) -> str:
-    """Render email template with material data. Returns HTML string."""
+def build_email_body(template_type: str, materials: list, key_date: str = "") -> str:
     template = load_template(template_type)
-
     eta_field = "current_eta" if template_type == "urgent" else "original_eta"
-
     rows = []
     for m in materials:
         eta = m.get(eta_field, "") or ""
@@ -116,37 +119,26 @@ def build_email_body(
             "</tr>"
         )
     material_rows = "\n".join(rows)
-
     first = materials[0]
     body = template.replace("{material_rows}", material_rows)
     body = body.replace("{buyer_name}", first.get("buyer_name", ""))
     body = body.replace("{buyer_email}", first.get("buyer_email", ""))
     body = body.replace("{project_no}", first.get("project_no", ""))
-    if key_date:
-        body = body.replace("{key_date}", key_date)
-    else:
-        body = body.replace("{key_date}", "")
+    body = body.replace("{key_date}", key_date if key_date else "")
     return body
 
 
 def load_template(template_type: str = "oc_confirmation") -> str:
-    """Load the chase email template from config/chase_email_templates/.
-
-    Args:
-        template_type: "oc_confirmation" | "urgent"
-    """
     tpl_dir = Path(__file__).parent.parent.parent / "config" / "chase_email_templates"
-    filename = f"{template_type}.txt"
-    tpl_path = tpl_dir / filename
+    tpl_path = tpl_dir / f"{template_type}.txt"
     if tpl_path.exists():
         return tpl_path.read_text(encoding="utf-8")
-    # fallback: try default.txt
     default = tpl_dir / "default.txt"
     if default.exists():
         return default.read_text(encoding="utf-8")
     return (
         "Dear Supplier,\n\n"
         "Please confirm the delivery date for the following items.\n\n"
-        "{items_table}\n\n"
+        "{material_rows}\n\n"
         "Best regards"
     )

@@ -117,7 +117,7 @@ document.addEventListener('alpine:init', () => {
     filters: { search:'', po_number:'', material_state:'', supplier:'', station_no:'', purchasing_group:'', buyer_key:[], is_focus:'', overdue:false, no_eta:false },
 
     showDetail: false, detailItem: null, detailHistory: [],
-    showChaseModal: false, chaseDrafts: [], chaseMode: 'draft', chaseLoading: false, chaseType: 'oc_confirmation',
+    showChaseModal: false, chaseDrafts: [], chaseSkipped: [], chaseMode: 'draft', chaseLoading: false,
 
     async init() {
       await this.loadFilterOptions();
@@ -254,10 +254,14 @@ document.addEventListener('alpine:init', () => {
 
     async openChaseModal() {
       if (!this.selected.size) { toast('请先勾选物料', 'info'); return; }
-      this.chaseLoading = true; this.showChaseModal = true; this.chaseDrafts = [];
+      this.chaseLoading = true; this.showChaseModal = true; this.chaseDrafts = []; this.chaseSkipped = [];
       try {
-        const r = await api('POST', this.purl('/chase/generate'), { material_ids: this.selectedIds, chase_type: this.chaseType, mode: this.chaseMode });
-        this.chaseDrafts = r.drafts;
+        // chase_type 不传，后端自动按 derive_material_state() 推断
+        const r = await api('POST', this.purl('/chase/generate'), { material_ids: this.selectedIds, mode: this.chaseMode });
+        this.chaseDrafts   = r.drafts   || [];
+        this.chaseSkipped  = r.skipped  || [];
+        if (this.chaseSkipped.length)
+          toast(`${this.chaseSkipped.length} 条已交货/在期内物料已跳过`, 'info');
       } catch (e) { toast(e.message, 'error'); }
       finally { this.chaseLoading = false; }
     },
@@ -265,8 +269,13 @@ document.addEventListener('alpine:init', () => {
     async sendChase() {
       this.chaseLoading = true;
       try {
-        await api('POST', this.purl('/chase/send'), { material_ids: this.selectedIds, chase_type: this.chaseType, mode: this.chaseMode });
-        toast(this.chaseMode === 'draft' ? '草稿已保存到 Outlook' : '邮件已发送', 'success');
+        const r = await api('POST', this.purl('/chase/send'), { material_ids: this.selectedIds, mode: this.chaseMode });
+        const skippedCount = (r.skipped || []).length;
+        const sentCount    = (r.drafts_result || []).length;
+        const msg = this.chaseMode === 'draft'
+          ? `草稿已保存到 Outlook（${sentCount} 封${skippedCount ? `，${skippedCount} 条跳过` : ''}）`
+          : `邮件已发送（${sentCount} 封${skippedCount ? `，${skippedCount} 条跳过` : ''}）`;
+        toast(msg, 'success');
         this.showChaseModal = false; this.selected = new Set(); this.load();
       } catch (e) { toast(e.message, 'error'); }
       finally { this.chaseLoading = false; }

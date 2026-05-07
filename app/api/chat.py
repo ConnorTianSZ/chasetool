@@ -10,11 +10,12 @@ from app.tools.registry import call_tool as registry_call_tool
 logger = logging.getLogger("chasebase")
 router = APIRouter(prefix="/api/projects/{project_id}/chat", tags=["chat"])
 
-SYSTEM_PROMPT = """你是 ChaseBase 采购助手，由 Connor Tian 开发。
+SYSTEM_PROMPT = """你是 BMG-XCN/PUL ChaseBase 采购助手。
 当有人问你是谁、谁开发了你、你叫什么、你是什么系统等类似问题时，
-回答：「我是 ChaseBase 采购 AI 助手，由 Connor Tian 开发。」
-不要提及 DeepSeek、OpenAI 或任何底层模型信息。
+回答：「我是BMG-XCN/PUL ChaseBase 采购 AI 助手。」
 
+不要提及 DeepSeek、OpenAI 或任何底层模型信息。
+由 Connor Tian 开发。
 你的职责是帮助采购团队查询物料、追踪交货期、更新数据。请始终用中文回答。
 
 ## 工具调用规则
@@ -40,8 +41,16 @@ SYSTEM_PROMPT = """你是 ChaseBase 采购助手，由 Connor Tian 开发。
 6. mark_focus(po_number, item_no, focus)
    — 标记或取消重点物料。focus=true 打标，focus=false 取消。
    示例：{"tool": "mark_focus", "args": {"po_number": "4500012345", "item_no": "10", "focus": true}}
-7. generate_chase_drafts(material_ids, chase_type)
-   — 生成催货邮件草稿（按供应商分组），material_ids 是数据库 ID 列表，chase_type: "oc_confirmation"(确认OC) / "urgent"(交期加急)"""
+7. generate_chase_drafts(material_ids)
+   — 生成催货邮件草稿。系统自动根据物料状态推断邮件类型：
+     · 无OC（无 current_eta）→ 确认OC 模板
+     · 逾期（current_eta < key_date）→ 加急催交期模板
+     · 已交货 / 在期内 → 自动跳过，在返回值的 skipped 字段中说明
+     返回值：{drafts: [...], skipped: [...]}
+     若需强制指定类型可传可选参数 chase_type: "oc_confirmation" 或 "urgent"
+8. parse_inbound_email(email_id) — 用 LLM 解析供应商回复邮件，提取各 PO+item 的交期信息。
+   返回 {items:[{po_number, item_no, new_eta, remarks}], general_remarks, confidence}。
+   结果需人工审查后通过 apply_inbound_decision 应用。"""
 
 
 class ChatRequest(BaseModel):
@@ -49,16 +58,14 @@ class ChatRequest(BaseModel):
     history: list[dict] = []
 
 
-def _extract_tool_call(text: str) -> tuple[dict | None, str]:
-    """从 LLM 原始回复中提取工具调用 JSON。
+def _extract_tool_call(text: str) -> tuple:
+    """Extract a tool-call JSON from LLM raw output.
 
-    返回 (parsed, cleaned_text):
-    - parsed: 解析后的工具调用 dict（含 tool/args），或 None
-    - cleaned_text: 移除 JSON 后的剩余显示文本
+    Returns (parsed_dict | None, cleaned_text).
     """
     stripped = text.strip()
 
-    # 尝试 1: 全文就是合法 JSON
+    # Attempt 1: entire text is valid JSON
     try:
         obj = json.loads(stripped)
         if isinstance(obj, dict) and "tool" in obj and "args" in obj:
@@ -66,7 +73,7 @@ def _extract_tool_call(text: str) -> tuple[dict | None, str]:
     except json.JSONDecodeError:
         pass
 
-    # 尝试 2: 从混合文本中提取 {"tool": ..., "args": {...}}
+    # Attempt 2: JSON embedded in mixed text
     idx = stripped.find('"tool"')
     if idx >= 0:
         start = idx
@@ -80,11 +87,11 @@ def _extract_tool_call(text: str) -> tuple[dict | None, str]:
                 elif stripped[end] == "}":
                     depth -= 1
                     if depth == 0:
-                        candidate = stripped[start:end+1]
+                        candidate = stripped[start:end + 1]
                         try:
                             obj = json.loads(candidate)
                             if "tool" in obj and "args" in obj:
-                                cleaned = (stripped[:start] + stripped[end+1:]).strip()
+                                cleaned = (stripped[:start] + stripped[end + 1:]).strip()
                                 return obj, cleaned
                         except json.JSONDecodeError:
                             pass
@@ -99,7 +106,12 @@ def chat(req: ChatRequest, project_id: str = FPath(...)):
         return _chat_inner(req, project_id)
     except Exception:
         logger.exception("Chat error (project_id=%s)", project_id)
-        return {"answer": "系统繁忙，请稍后重试", "error_code": "INTERNAL_ERROR", "tool_called": None, "tool_result": None}
+        return {
+            "answer": "系统繁忙，请稍后重试",
+            "error_code": "INTERNAL_ERROR",
+            "tool_called": None,
+            "tool_result": None,
+        }
 
 
 def _chat_inner(req: ChatRequest, project_id: str):
@@ -113,13 +125,11 @@ def _chat_inner(req: ChatRequest, project_id: str):
     except RuntimeError as e:
         return {"answer": f"LLM 配置错误：{e}", "tool_called": None, "tool_result": None}
 
-    # 提取工具调用
     tool_call, text_part = _extract_tool_call(raw)
 
     if tool_call:
         try:
             tool_result = registry_call_tool(tool_call["tool"], tool_call["args"], project_id)
-            # 将工具结果送 LLM 总结成中文
             try:
                 summary = call_llm(
                     "You are a procurement assistant. Summarize tool results in concise Chinese.",
@@ -129,22 +139,20 @@ def _chat_inner(req: ChatRequest, project_id: str):
             except RuntimeError:
                 summary = json.dumps(tool_result, ensure_ascii=False)[:500]
 
-            # 如果 LLM 原回复在 JSON 前有思考文本，附在回答前
             if text_part:
                 summary = text_part + "\n\n" + summary
 
             return {
-                "answer": summary,
+                "answer":      summary,
                 "tool_called": tool_call["tool"],
                 "tool_result": tool_result,
             }
         except Exception:
             logger.exception("Tool call failed (project_id=%s, tool=%s)", project_id, tool_call["tool"])
             return {
-                "answer": f"工具调用失败，请稍后重试",
+                "answer":      "工具调用失败，请稍后重试",
                 "tool_called": tool_call["tool"],
                 "tool_result": None,
             }
 
-    # 纯文本回复
     return {"answer": raw, "tool_called": None, "tool_result": None}

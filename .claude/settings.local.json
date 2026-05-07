@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh repo *)",
+      "Bash(python -m py_compile app/logger.py)",
+      "Bash(python -m py_compile app/api/chat.py)",
+      "Bash(python -m py_compile app/tools/registry.py)",
+      "Bash(python -m py_compile app/tools/search.py)",
+      "Bash(python -m py_compile app/tools/dashboard.py)",
+      "Bash(timeout 8 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000)",
+      "Bash(python -c \"from app.main import app; print\\('App loads OK'\\)\")",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app/api/chat.py', encoding='utf-8'\\).read\\(\\)\\); ast.parse\\(open\\('app/tools/update_material.py', encoding='utf-8'\\).read\\(\\)\\); print\\('Python files OK'\\)\")",
+      "Bash(git status *)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app/services/outlook_send.py'\\).read\\(\\)\\); print\\('outlook_send.py OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app/api/chase.py'\\).read\\(\\)\\); print\\('chase.py OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app/tools/chase_email.py'\\).read\\(\\)\\); print\\('chase_email.py OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app/api/chase.py', encoding='utf-8'\\).read\\(\\)\\); print\\('chase.py OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app/tools/chase_email.py', encoding='utf-8'\\).read\\(\\)\\); print\\('chase_email.py OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app/api/chat.py', encoding='utf-8'\\).read\\(\\)\\); print\\('chat.py OK'\\)\")"
+    ]
+  }
+}

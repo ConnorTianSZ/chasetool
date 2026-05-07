@@ -86,6 +86,10 @@ _MIGRATION_STMTS = [
     "ALTER TABLE materials ADD COLUMN position_text1 TEXT",
     "ALTER TABLE materials ADD COLUMN position_text2 TEXT",
     "ALTER TABLE materials ADD COLUMN last_feedback_chase_count INTEGER",
+    # Phase 1b: marker_tag 用于新格式 marker → chase_log 归属查询
+    "ALTER TABLE chase_log ADD COLUMN marker_tag TEXT",
+    # Phase 3: inbound_emails 关联 chase_log
+    "ALTER TABLE inbound_emails ADD COLUMN chase_log_id INTEGER",
 ]
 
 _PROJECT_SETTINGS_SQL = """

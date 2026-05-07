@@ -142,17 +142,55 @@ def _call_openai_compat(system: str, user: str, model: str, max_tokens: int) -> 
 
 
 def parse_email_for_eta(email_subject: str, email_body: str) -> dict:
-    system = (
-        "You are a procurement assistant. Extract delivery info from supplier emails. "
-        "Return JSON: {new_eta, remarks, confidence, po_number, item_nos}. "
-        "new_eta: YYYY-MM-DD or null. confidence: 0.0-1.0."
-    )
+    """
+    Extract delivery date info from supplier reply email (multi-line support).
+
+    Returns:
+      {"items": [{"po_number": str|None, "item_no": str|None,
+                  "new_eta": "YYYY-MM-DD"|None, "remarks": str}],
+       "general_remarks": str, "confidence": float}
+    """
+    sys_lines = [
+        "You are a procurement assistant. Extract delivery date information from supplier reply emails.",
+        "The email may contain delivery dates for multiple PO line items.",
+        "",
+        "Return ONLY valid JSON:",
+        '{"items":[{"po_number":"str or null","item_no":"str or null","new_eta":"YYYY-MM-DD or null","remarks":"str"}],"general_remarks":"str","confidence":0.0}',
+        "",
+        "Rules:",
+        "- One entry per distinct PO line item.",
+        "- If only a general date (no specific items), use po_number=null and item_no=null.",
+        "- new_eta must be YYYY-MM-DD or null.",
+        "- confidence: 0.0-1.0.",
+        "- Output JSON only, no extra text.",
+    ]
+    system = "\n".join(sys_lines)
     user = "Subject: " + email_subject + "\n\nBody:\n" + email_body[:3000]
     raw = call_llm(system, user, response_format="json")
+
     try:
-        return json.loads(raw)
+        parsed = json.loads(raw)
     except json.JSONDecodeError:
-        return {"new_eta": None, "remarks": raw[:200], "confidence": 0.3, "po_number": None, "item_nos": []}
+        return {
+            "items": [{"po_number": None, "item_no": None, "new_eta": None, "remarks": raw[:300]}],
+            "general_remarks": "",
+            "confidence": 0.1,
+        }
+
+    # Compat: old format {new_eta, po_number, item_nos}
+    if "items" not in parsed and "new_eta" in parsed:
+        item_nos = parsed.get("item_nos") or [None]
+        parsed = {
+            "items": [
+                {"po_number": parsed.get("po_number"), "item_no": str(i) if i else None,
+                 "new_eta": parsed.get("new_eta"), "remarks": parsed.get("remarks", "")}
+                for i in item_nos
+            ],
+            "general_remarks": "",
+            "confidence": parsed.get("confidence", 0.5),
+        }
+
+    return parsed
 
 
 def generate_chase_email(materials: list, tone: str = "formal", template: str = "") -> str:

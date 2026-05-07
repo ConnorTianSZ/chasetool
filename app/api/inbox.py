@@ -13,6 +13,22 @@ from app.tools.parse_inbound import parse_inbound_email, apply_inbound_decision
 router = APIRouter(prefix="/api/projects/{project_id}/inbox", tags=["inbox"])
 
 
+def _resolve_chase_log_id(conn, marker_tag):
+    if not marker_tag:
+        return None
+    row = conn.execute(
+        "SELECT id FROM chase_log WHERE marker_tag=? ORDER BY sent_at DESC LIMIT 1",
+        (marker_tag,),
+    ).fetchone()
+    if row:
+        return row[0]
+    row = conn.execute(
+        "SELECT id FROM chase_log WHERE subject LIKE ? ORDER BY sent_at DESC LIMIT 1",
+        (f"%{marker_tag}%",),
+    ).fetchone()
+    return row[0] if row else None
+
+
 @router.post("/pull")
 def pull(
     project_id: str = FPath(...),
@@ -64,20 +80,22 @@ async def upload_msg(
             import extract_msg
             msg = extract_msg.Message(tmp_path)
             subject = msg.subject or ""
-            body = msg.body or ""
-            sender = msg.sender or ""
+            body    = msg.body or ""
+            sender  = msg.sender or ""
             msg.close()
         except Exception as e:
             raise HTTPException(400, f"Cannot parse .msg file: {e}")
 
-        from app.services.email_marker import parse_marker
-        marker = parse_marker(subject)
-        marker_str = marker.to_subject_tag() if marker else None
+        from app.services.email_marker import parse_marker, marker_tag_from_subject, LegacyChaseMarker
+        marker     = parse_marker(subject)
+        marker_tag = marker_tag_from_subject(subject)
 
-        mat_id = None
         conn = get_connection(project_id)
         try:
-            if marker:
+            chase_log_id = _resolve_chase_log_id(conn, marker_tag)
+
+            mat_id = None
+            if isinstance(marker, LegacyChaseMarker) and not chase_log_id:
                 row = conn.execute(
                     "SELECT id FROM materials WHERE po_number=? AND item_no=?",
                     (marker.po_number, marker.item_nos[0] if marker.item_nos else ""),
@@ -88,13 +106,13 @@ async def upload_msg(
             cur = conn.execute(
                 "INSERT INTO inbound_emails "
                 "(outlook_entry_id, from_address, subject, body, received_at, "
-                " parsed_marker, matched_material_id, status) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, 'new')",
+                " parsed_marker, matched_material_id, chase_log_id, status) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'new')",
                 (
                     f"msg:{file.filename}",
                     sender, subject, body,
                     datetime.utcnow().isoformat(),
-                    marker_str, mat_id,
+                    marker_tag, mat_id, chase_log_id,
                 ),
             )
             email_id = cur.lastrowid
@@ -102,7 +120,12 @@ async def upload_msg(
         finally:
             conn.close()
 
-        return {"ok": True, "email_id": email_id, "matched_material_id": mat_id}
+        return {
+            "ok":                  True,
+            "email_id":            email_id,
+            "chase_log_id":        chase_log_id,
+            "matched_material_id": mat_id,
+        }
     finally:
         os.unlink(tmp_path)
 

@@ -358,26 +358,38 @@
               <div x-show="chaseLoading" class="loading-hint">正在生成草稿…</div>
               <template x-if="!chaseLoading">
                 <div>
-                  <div class="form-row" style="margin-bottom:12px;">
-                    <span style="font-size:13px;white-space:nowrap;">模板类型：</span>
-                    <label class="check-label"><input type="radio" x-model="chaseType" value="oc_confirmation" @change="openChaseModal()" /> 确认 OC</label>
-                    <label class="check-label"><input type="radio" x-model="chaseType" value="urgent" @change="openChaseModal()" /> 交期加急</label>
-                  </div>
+                  <!-- 发送方式 -->
                   <div class="form-row" style="margin-bottom:12px;">
                     <span style="font-size:13px;white-space:nowrap;">发送方式：</span>
                     <label class="check-label"><input type="radio" x-model="chaseMode" value="draft" /> 保存草稿到 Outlook（推荐）</label>
                     <label class="check-label"><input type="radio" x-model="chaseMode" value="send" /> 直接发送</label>
                   </div>
+                  <!-- 跳过提示 -->
+                  <template x-if="chaseSkipped.length > 0">
+                    <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:#92400e;">
+                      <strong>已跳过 <span x-text="chaseSkipped.length"></span> 条无需催促的物料：</strong>
+                      <span x-text="chaseSkipped.map(s => s.po_number + '/' + s.item_no + '（' + s.state_label + '）').join('，')"></span>
+                    </div>
+                  </template>
+                  <!-- 草稿列表 -->
                   <template x-for="(draft, i) in chaseDrafts" :key="i">
                     <div style="border:1px solid #e5e7eb;border-radius:6px;margin-bottom:10px;overflow:hidden;">
-                      <div style="padding:7px 12px;background:#f9fafb;font-size:12px;color:#555;">
-                        收件人：<strong x-text="draft.to_address || '（未配置邮箱）'"></strong>
-                        &nbsp;|&nbsp; 主题：<strong x-text="draft.subject"></strong>
+                      <div style="padding:7px 12px;background:#f9fafb;font-size:12px;color:#555;display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
+                        <span>收件人：<strong x-text="draft.to_address || '（未配置邮箱）'"></strong></span>
+                        <span style="color:#d1d5db;">|</span>
+                        <span>主题：<strong x-text="draft.subject"></strong></span>
+                        <span style="color:#d1d5db;">|</span>
+                        <span style="color:#6b7280;">涉及 PO：<span x-text="(draft.po_numbers||[]).join(', ')"></span></span>
                       </div>
                       <textarea x-model="draft.body" style="width:100%;height:130px;border:none;padding:10px;font-size:12px;resize:vertical;outline:none;"></textarea>
                     </div>
                   </template>
-                  <template x-if="chaseDrafts.length===0"><div class="empty">暂无草稿</div></template>
+                  <template x-if="chaseDrafts.length===0 && chaseSkipped.length===0">
+                    <div class="empty">暂无草稿</div>
+                  </template>
+                  <template x-if="chaseDrafts.length===0 && chaseSkipped.length>0">
+                    <div class="empty">所选物料均无需催促（已交货或交期在期内）</div>
+                  </template>
                 </div>
               </template>
             </div>
