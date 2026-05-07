@@ -40,8 +40,8 @@ SYSTEM_PROMPT = """你是 ChaseBase 采购助手，由 Connor Tian 开发。
 6. mark_focus(po_number, item_no, focus)
    — 标记或取消重点物料。focus=true 打标，focus=false 取消。
    示例：{"tool": "mark_focus", "args": {"po_number": "4500012345", "item_no": "10", "focus": true}}
-7. generate_chase_drafts(material_ids, tone)
-   — 生成催货邮件草稿（按供应商分组），material_ids 是数据库 ID 列表，tone: formal/friendly"""
+7. generate_chase_drafts(material_ids, chase_type)
+   — 生成催货邮件草稿（按供应商分组），material_ids 是数据库 ID 列表，chase_type: "oc_confirmation"(确认OC) / "urgent"(交期加急)"""
 
 
 class ChatRequest(BaseModel):

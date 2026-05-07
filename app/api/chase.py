@@ -7,19 +7,23 @@ from fastapi import APIRouter, Path as FPath
 from pydantic import BaseModel
 from app.db.connection import get_connection
 from app.services.email_marker import build_marker
-from app.services.outlook_send import send_chase_email, build_chase_subject, load_template
-from app.services.llm_client import generate_chase_email
+from app.services.outlook_send import send_chase_email, build_chase_subject, build_email_body
 
 router = APIRouter(prefix="/api/projects/{project_id}/chase", tags=["chase"])
 
 
 class ChaseRequest(BaseModel):
     material_ids: list[int]
-    tone: str = "formal"
+    chase_type: str = "oc_confirmation"   # oc_confirmation | urgent
     mode: Literal["draft", "send"] = "draft"
 
 
-def _build_drafts(material_ids: list[int], project_id: str, tone: str = "formal") -> list[dict]:
+def _build_drafts(
+    material_ids: list[int],
+    project_id: str,
+    chase_type: str = "oc_confirmation",
+    key_date: str = "",
+) -> list[dict]:
     conn = get_connection(project_id)
     try:
         placeholders = ",".join("?" * len(material_ids))
@@ -29,7 +33,15 @@ def _build_drafts(material_ids: list[int], project_id: str, tone: str = "formal"
     finally:
         conn.close()
 
-    template = load_template()
+    if not key_date:
+        # fallback: read from project_settings
+        conn2 = get_connection(project_id)
+        row = conn2.execute(
+            "SELECT value FROM project_settings WHERE key='material_key_date'"
+        ).fetchone()
+        key_date = row["value"] if row else ""
+        conn2.close()
+
     drafts = []
     groups: dict[tuple, list[dict]] = {}
     for r in rows:
@@ -41,7 +53,7 @@ def _build_drafts(material_ids: list[int], project_id: str, tone: str = "formal"
         item_nos = [m["item_no"] for m in mats]
         marker   = build_marker(po, item_nos)
         subject  = build_chase_subject(marker)
-        body     = generate_chase_email(mats, tone=tone, template=template)
+        body     = build_email_body(chase_type, mats, key_date=key_date)
         drafts.append({
             "to_address":   buyer_email,
             "subject":      subject,
@@ -54,21 +66,23 @@ def _build_drafts(material_ids: list[int], project_id: str, tone: str = "formal"
 
 @router.post("/generate")
 def generate_drafts(req: ChaseRequest, project_id: str = FPath(...)):
-    return {"drafts": _build_drafts(req.material_ids, project_id, tone=req.tone)}
+    return {"drafts": _build_drafts(req.material_ids, project_id, chase_type=req.chase_type)}
 
 
 @router.post("/send")
 def send_drafts(req: ChaseRequest, project_id: str = FPath(...)):
     from app.services.email_marker import parse_marker
-    drafts = _build_drafts(req.material_ids, project_id, tone=req.tone)
+    drafts = _build_drafts(req.material_ids, project_id, chase_type=req.chase_type)
     results = []
     for d in drafts:
         marker = parse_marker(d["marker"])
+        is_html = d["body"].strip().startswith("<html") or d["body"].strip().startswith("<!DOCTYPE")
         r = send_chase_email(
             to_address=d["to_address"], cc="",
             subject=d["subject"], body=d["body"],
             material_ids=d["material_ids"], marker=marker,
             mode=req.mode, project_id=project_id,
+            is_html=is_html,
         )
         results.append(r)
     return {"ok": True, "results": results}

@@ -359,6 +359,11 @@
               <template x-if="!chaseLoading">
                 <div>
                   <div class="form-row" style="margin-bottom:12px;">
+                    <span style="font-size:13px;white-space:nowrap;">模板类型：</span>
+                    <label class="check-label"><input type="radio" x-model="chaseType" value="oc_confirmation" @change="openChaseModal()" /> 确认 OC</label>
+                    <label class="check-label"><input type="radio" x-model="chaseType" value="urgent" @change="openChaseModal()" /> 交期加急</label>
+                  </div>
+                  <div class="form-row" style="margin-bottom:12px;">
                     <span style="font-size:13px;white-space:nowrap;">发送方式：</span>
                     <label class="check-label"><input type="radio" x-model="chaseMode" value="draft" /> 保存草稿到 Outlook（推荐）</label>
                     <label class="check-label"><input type="radio" x-model="chaseMode" value="send" /> 直接发送</label>

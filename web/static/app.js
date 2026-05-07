@@ -117,7 +117,7 @@ document.addEventListener('alpine:init', () => {
     filters: { search:'', po_number:'', material_state:'', supplier:'', station_no:'', purchasing_group:'', buyer_key:[], is_focus:'', overdue:false, no_eta:false },
 
     showDetail: false, detailItem: null, detailHistory: [],
-    showChaseModal: false, chaseDrafts: [], chaseMode: 'draft', chaseLoading: false,
+    showChaseModal: false, chaseDrafts: [], chaseMode: 'draft', chaseLoading: false, chaseType: 'oc_confirmation',
 
     async init() {
       await this.loadFilterOptions();
@@ -256,7 +256,7 @@ document.addEventListener('alpine:init', () => {
       if (!this.selected.size) { toast('请先勾选物料', 'info'); return; }
       this.chaseLoading = true; this.showChaseModal = true; this.chaseDrafts = [];
       try {
-        const r = await api('POST', this.purl('/chase/generate'), { material_ids: this.selectedIds, tone: 'formal', mode: this.chaseMode });
+        const r = await api('POST', this.purl('/chase/generate'), { material_ids: this.selectedIds, chase_type: this.chaseType, mode: this.chaseMode });
         this.chaseDrafts = r.drafts;
       } catch (e) { toast(e.message, 'error'); }
       finally { this.chaseLoading = false; }
@@ -265,7 +265,7 @@ document.addEventListener('alpine:init', () => {
     async sendChase() {
       this.chaseLoading = true;
       try {
-        await api('POST', this.purl('/chase/send'), { material_ids: this.selectedIds, tone: 'formal', mode: this.chaseMode });
+        await api('POST', this.purl('/chase/send'), { material_ids: this.selectedIds, chase_type: this.chaseType, mode: this.chaseMode });
         toast(this.chaseMode === 'draft' ? '草稿已保存到 Outlook' : '邮件已发送', 'success');
         this.showChaseModal = false; this.selected = new Set(); this.load();
       } catch (e) { toast(e.message, 'error'); }
