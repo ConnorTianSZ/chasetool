@@ -15,7 +15,7 @@ from datetime import date
 
 # v2 新格式：[CB:项目号-PGR-purpose-MMDD-seq]
 _V2_RE = re.compile(
-    r"\[CB:([A-Z0-9\-_]+)-([A-Z0-9]+)-(OC|URG)-(\d{4})-(\d+)\]",
+    r"\[CB[:.]([A-Z0-9\-_]+)-([A-Z0-9]+)-(OC|URG)-(\d{4})-(\d+)\]",
     re.IGNORECASE,
 )
 
@@ -129,7 +129,9 @@ def marker_tag_from_subject(subject: str) -> str | None:
     """从 subject 提取 marker tag 字符串（用于 chase_log 查询）。"""
     m2 = _V2_RE.search(subject)
     if m2:
-        return m2.group(0)
+        tag = m2.group(0)
+        # 供应商回复时冒号可能变为点号，统一标准化为冒号以匹配 chase_log
+        return tag.replace("[CB.", "[CB:")
     m1 = _V1_RE.search(subject)
     if m1:
         return m1.group(0)
