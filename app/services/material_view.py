@@ -75,6 +75,7 @@ def _to_int(value: Any) -> int:
 
 def derive_material_state(row: dict[str, Any], key_date: str | date | datetime | None = None) -> dict[str, str]:
     effective_key_date = clean_date_value(key_date) or date.today().isoformat()
+    today = date.today().isoformat()
 
     if _is_zero_quantity(row.get("open_quantity_gr")):
         return {"code": "delivered", "label": "已交货", "badge": "badge-delivered"}
@@ -83,8 +84,13 @@ def derive_material_state(row: dict[str, Any], key_date: str | date | datetime |
     if not current_eta:
         return {"code": "no_oc", "label": "无OC", "badge": "badge-no-eta"}
 
+    # 供应商已超过自身承诺日期（应交未交）
+    if current_eta < today:
+        return {"code": "overdue_now", "label": "应交未交", "badge": "badge-overdue-now"}
+
+    # OC 日期晚于项目关键节点（将来交货但无法满足项目需求）
     if current_eta < effective_key_date:
-        return {"code": "overdue", "label": "逾期", "badge": "badge-overdue"}
+        return {"code": "overdue_keydate", "label": "晚于节点", "badge": "badge-overdue-keydate"}
 
     return {"code": "normal", "label": "正常", "badge": "badge-open"}
 

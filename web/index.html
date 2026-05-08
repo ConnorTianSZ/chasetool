@@ -172,7 +172,8 @@
           <select x-model="filters.material_state">
             <option value="">全部状态</option>
             <option value="normal">正常</option>
-            <option value="overdue">逾期</option>
+            <option value="overdue_now">应交未交</option>
+            <option value="overdue_keydate">晚于节点</option>
             <option value="delivered">已交货</option>
             <option value="no_oc">无OC</option>
           </select>
@@ -534,10 +535,12 @@
                                   <template x-if="ei.matched">
                                     <span class="badge badge-sm"
                                       :class="{
-                                        'badge-no-eta':   ei.matched.state_code==='no_oc',
-                                        'badge-overdue':  ei.matched.state_code==='overdue',
-                                        'badge-open':     ei.matched.state_code==='normal',
-                                        'badge-delivered':ei.matched.state_code==='delivered'
+                                        'badge-no-eta':           ei.matched.state_code==='no_oc',
+                                        'badge-overdue-now':      ei.matched.state_code==='overdue_now',
+                                        'badge-overdue-keydate':  ei.matched.state_code==='overdue_keydate',
+                                        'badge-overdue':          ei.matched.state_code==='overdue',
+                                        'badge-open':             ei.matched.state_code==='normal',
+                                        'badge-delivered':        ei.matched.state_code==='delivered'
                                       }"
                                       x-text="ei.matched.state_label"></span>
                                   </template>

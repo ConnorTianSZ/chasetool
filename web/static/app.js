@@ -190,8 +190,10 @@ document.addEventListener('alpine:init', () => {
     },
 
     isOverdue(item) {
-      return item.material_state === 'overdue';
+      return item.material_state === 'overdue_now' || item.material_state === 'overdue_keydate' || item.material_state === 'overdue';
     },
+    isOverdueNow(item)     { return item.material_state === 'overdue_now'; },
+    isOverdueKeydate(item) { return item.material_state === 'overdue_keydate'; },
     noEta(item)  { return item.material_state === 'no_oc'; },
     statusBadge(item) { return item.material_state_badge || ({open:'badge-open',delivered:'badge-delivered',cancelled:'badge-cancelled',on_hold:'badge-on_hold'})[item.status] || 'badge-open'; },
     formatDate(value) {

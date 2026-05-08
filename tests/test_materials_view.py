@@ -25,23 +25,43 @@ class MaterialViewHelpersTest(unittest.TestCase):
         self.assertEqual(format_display_date("2026-05-07"), "2026/05/07")
         self.assertEqual(format_display_date(None), "")
 
-    def test_material_state_uses_key_date_and_open_quantity(self):
+    def test_material_state_delivered_and_no_oc(self):
         self.assertEqual(
             derive_material_state({"open_quantity_gr": 0, "current_eta": "2026-01-01"}, "2026-05-07")["code"],
             "delivered",
         )
         self.assertEqual(
-            derive_material_state({"open_quantity_gr": 5, "current_eta": "2026-05-08"}, "2026-05-07")["code"],
-            "normal",
-        )
-        self.assertEqual(
-            derive_material_state({"open_quantity_gr": 5, "current_eta": "2026-05-06"}, "2026-05-07")["code"],
-            "overdue",
-        )
-        self.assertEqual(
             derive_material_state({"open_quantity_gr": 5, "current_eta": None}, "2026-05-07")["code"],
             "no_oc",
         )
+
+    def test_material_state_normal(self):
+        """OC 日期 >= KEYDATE → 正常"""
+        from datetime import date, timedelta
+        future_key  = (date.today() + timedelta(days=30)).isoformat()
+        future_eta  = (date.today() + timedelta(days=45)).isoformat()
+        self.assertEqual(
+            derive_material_state({"open_quantity_gr": 5, "current_eta": future_eta}, future_key)["code"],
+            "normal",
+        )
+
+    def test_material_state_overdue_now(self):
+        """OC 日期早于今日 → 应交未交 (overdue_now)"""
+        from datetime import date, timedelta
+        past_eta = (date.today() - timedelta(days=3)).isoformat()
+        future_key = (date.today() + timedelta(days=30)).isoformat()
+        result = derive_material_state({"open_quantity_gr": 5, "current_eta": past_eta}, future_key)
+        self.assertEqual(result["code"], "overdue_now")
+        self.assertEqual(result["badge"], "badge-overdue-now")
+
+    def test_material_state_overdue_keydate(self):
+        """OC 日期在今日之后但早于 KEYDATE → 晚于节点 (overdue_keydate)"""
+        from datetime import date, timedelta
+        near_future_eta = (date.today() + timedelta(days=5)).isoformat()
+        far_key         = (date.today() + timedelta(days=2)).isoformat()
+        result = derive_material_state({"open_quantity_gr": 5, "current_eta": near_future_eta}, far_key)
+        self.assertEqual(result["code"], "overdue_keydate")
+        self.assertEqual(result["badge"], "badge-overdue-keydate")
 
     def test_chase_status_labels_count_and_feedback_dates(self):
         self.assertEqual(
@@ -162,7 +182,11 @@ class MaterialsApiTest(unittest.TestCase):
         )
 
         self.assertEqual([r["po_number"] for r in result["items"]], ["PO-LATE", "PO-NORMAL", "PO-DONE"])
-        self.assertEqual([r["material_state"] for r in result["items"]], ["overdue", "normal", "delivered"])
+        # PO-LATE: current_eta=2026-05-06 < 今日(2026-05-08) → overdue_now
+        # PO-NORMAL: current_eta=2026-05-08 >= key_date=2026-05-07 → normal
+        self.assertEqual(result["items"][0]["material_state"], "overdue_now")
+        self.assertEqual(result["items"][1]["material_state"], "normal")
+        self.assertEqual(result["items"][2]["material_state"], "delivered")
 
     def test_filter_options_include_buyer_choices(self):
         self._insert_material(buyer_name="Tian Connor", buyer_email="Connor.TIAN@cn.bosch.com")

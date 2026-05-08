@@ -9,15 +9,19 @@ from app.services.material_view import derive_material_state, enrich_material_ro
 from app.services.outlook_send import send_chase_email, build_chase_subject, build_email_body
 
 # state code → chase_type 映射
+# overdue_now:     供应商已超过自身承诺日期（应交未交） → 加急催促
+# overdue_keydate: OC 将来交但晚于项目节点（无法满足需求） → 请求提前确认
 _STATE_TO_CHASE_TYPE: dict[str, str] = {
-    "no_oc":   "oc_confirmation",
-    "overdue": "urgent",
+    "no_oc":           "oc_confirmation",
+    "overdue_now":     "urgent_now",
+    "overdue_keydate": "urgent_keydate",
 }
 
 # chase_type → marker purpose
 _CHASE_TYPE_TO_PURPOSE: dict[str, str] = {
     "oc_confirmation": "OC",
-    "urgent":          "URG",
+    "urgent_now":      "URG",
+    "urgent_keydate":  "URG",
 }
 
 
@@ -58,7 +62,7 @@ def build_drafts(
     Args:
         material_ids:        物料 DB id 列表
         project_id:          项目 id
-        chase_type_override: 强制指定类型（"oc_confirmation"|"urgent"），覆盖自动推断
+        chase_type_override: 强制指定类型（"oc_confirmation"|"urgent_now"|"urgent_keydate"），覆盖自动推断
     """
     key_date = _get_key_date(project_id)
     pgr_map  = load_pgr_map()
@@ -117,7 +121,7 @@ def build_drafts(
             seq      = _next_seq(conn2, base_key)
 
             marker  = build_marker(project_no=project_no, pgr=pgr, purpose=purpose, seq=seq)
-            subject = build_chase_subject(marker)
+            subject = build_chase_subject(marker, chase_type=chase_type)
             body    = build_email_body(chase_type, mats, key_date=key_date)
 
             drafts.append({
@@ -147,7 +151,8 @@ def generate_chase_drafts(
     """
     LLM Tool 入口：生成催货草稿（不发送）。
 
-    chase_type 可选，传入时强制覆盖自动推断；不传则由 derive_material_state() 自动决定。
+    chase_type 可选，传入时强制覆盖自动推断（"oc_confirmation"|"urgent_now"|"urgent_keydate"）；
+    不传则由 derive_material_state() 自动决定。
     返回 {drafts: [...], skipped: [...]}
     """
     return build_drafts(

@@ -121,7 +121,9 @@ tr.is-no-eta  td:first-child { border-left: 3px solid #9333ea; }
 .badge-delivered { background: #dcfce7; color: #15803d; }
 .badge-cancelled { background: #f3f4f6; color: #6b7280; }
 .badge-on_hold   { background: #fef3c7; color: #92400e; }
-.badge-overdue   { background: #fee2e2; color: #b91c1c; }
+.badge-overdue         { background: #fee2e2; color: #b91c1c; }  /* 兼容旧数据 */
+.badge-overdue-now     { background: #fecaca; color: #991b1b; } /* 应交未交（深红） */
+.badge-overdue-keydate { background: #fed7aa; color: #c2410c; } /* 晚于节点（橙色） */
 .badge-no-eta    { background: #f3e8ff; color: #7e22ce; }
 
 /* ── 筛选 / 工具栏 ── */

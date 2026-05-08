@@ -89,11 +89,13 @@ def send_chase_email(
     return {"ok": True, "method": method, "chase_log_id": log_id, "marker_tag": marker_tag}
 
 
-def build_chase_subject(marker) -> str:
+def build_chase_subject(marker, chase_type: str = "") -> str:
     tag = marker.to_subject_tag()
     if isinstance(marker, ChaseMarker):
         if marker.is_oc:
             return f"{tag} OC Confirmation / 请确认订单交期"
+        elif chase_type == "urgent_keydate":
+            return f"{tag} Delivery Expedite / 请确认能否提前交货"
         else:
             return f"{tag} Urgent Delivery / 请加急确认最新交期"
     return f"{tag} Delivery Chase / 请确认交货期"
@@ -101,7 +103,8 @@ def build_chase_subject(marker) -> str:
 
 def build_email_body(template_type: str, materials: list, key_date: str = "") -> str:
     template = load_template(template_type)
-    eta_field = "current_eta" if template_type == "urgent" else "original_eta"
+    # urgent_now / urgent_keydate 都展示当前 OC 日期；oc_confirmation 展示原始 ETA
+    eta_field = "current_eta" if template_type.startswith("urgent") else "original_eta"
     rows = []
     for m in materials:
         eta = m.get(eta_field, "") or ""

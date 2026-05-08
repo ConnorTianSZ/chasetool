@@ -1,0 +1,13 @@
+<html>
+<body style="font-family: Arial, sans-serif; font-size: 10pt; color: #333;">
+<p>Dear {buyer_name},</p>
+<p><strong>{project_no}</strong> 以下物料已超过供应商承诺交期（Current ETA），目前处于<strong style="color:#dc2626;">应交未交</strong>状态，烦请立即与供应商确认最新动态并回复。</p>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse; width:100%; font-size:9pt;">
+<tr style="background-color:#f2f2f2;">
+<th>PO Number</th><th>Item No</th><th>WBS Element</th><th>Part No</th><th>Description</th><th>Qty</th><th>Unit</th><th>Supplier</th><th>Current ETA（已过期）</th>
+</tr>
+{material_rows}
+</table>
+<p>请尽快反馈供应商最新 ETA 及原因说明。感谢！</p>
+</body>
+</html>
