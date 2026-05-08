@@ -124,9 +124,9 @@ def build_email_body(template_type: str, materials: list, key_date: str = "") ->
     material_rows = "\n".join(rows)
     first = materials[0]
     body = template.replace("{material_rows}", material_rows)
-    body = body.replace("{buyer_name}", first.get("buyer_name", ""))
-    body = body.replace("{buyer_email}", first.get("buyer_email", ""))
-    body = body.replace("{project_no}", first.get("project_no", ""))
+    body = body.replace("{buyer_name}", first.get("buyer_name") or "")
+    body = body.replace("{buyer_email}", first.get("buyer_email") or "")
+    body = body.replace("{project_no}", first.get("project_no") or "")
     body = body.replace("{key_date}", key_date if key_date else "")
     return body
 
