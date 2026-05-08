@@ -26,7 +26,9 @@
       "Bash(git diff *)",
       "Bash(echo \"exit: $?\")",
       "WebFetch(domain:github.com)",
-      "Bash(git log *)"
+      "Bash(git log *)",
+      "Bash(git rm *)",
+      "Bash(git remote *)"
     ]
   }
 }

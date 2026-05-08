@@ -1,8 +1,9 @@
 """Outlook inbox pull service"""
 from __future__ import annotations
+import json
 from datetime import datetime, timedelta
 from app.db.connection import get_connection
-from app.services.email_marker import parse_marker
+from app.services.email_marker import parse_marker, ChaseMarker, LegacyChaseMarker
 
 _outlook_app = None
 
@@ -54,13 +55,24 @@ def pull_inbox(days: int = 14, project_id: str = "default") -> dict:
 
                 mat_id = None
                 if marker:
-                    row = conn.execute(
-                        "SELECT id FROM materials WHERE po_number=? AND item_no=?",
-                        (marker.po_number,
-                         marker.item_nos[0] if marker.item_nos else ""),
-                    ).fetchone()
-                    if row:
-                        mat_id = row[0]
+                    if isinstance(marker, LegacyChaseMarker):
+                        row = conn.execute(
+                            "SELECT id FROM materials WHERE po_number=? AND item_no=?",
+                            (marker.po_number,
+                             marker.item_nos[0] if marker.item_nos else ""),
+                        ).fetchone()
+                        if row:
+                            mat_id = row[0]
+                    elif isinstance(marker, ChaseMarker):
+                        row = conn.execute(
+                            "SELECT material_ids_json FROM chase_log "
+                            "WHERE marker_tag=? ORDER BY sent_at DESC LIMIT 1",
+                            (marker.to_subject_tag(),),
+                        ).fetchone()
+                        if row:
+                            ids = json.loads(row[0])
+                            if ids:
+                                mat_id = ids[0]
 
                 conn.execute(
                     "INSERT INTO inbound_emails "
