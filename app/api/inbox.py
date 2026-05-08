@@ -59,8 +59,8 @@ def pull(
         result = pull_inbox(effective_days, project_id=project_id)
         result["pulled_days"] = effective_days
         return result
-    except RuntimeError as e:
-        raise HTTPException(503, str(e))
+    except Exception as e:
+        raise HTTPException(503, f"Inbox pull failed: {e}")
 
 
 @router.post("/upload_msg")

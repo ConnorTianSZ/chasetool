@@ -28,7 +28,12 @@
       "WebFetch(domain:github.com)",
       "Bash(git log *)",
       "Bash(git rm *)",
-      "Bash(git remote *)"
+      "Bash(git remote *)",
+      "Bash(ls *.log)",
+      "Bash(ls logs/)",
+      "Bash(sqlite3 *)",
+      "Bash(python3 *)",
+      "Bash(python *)"
     ]
   }
 }

@@ -26,9 +26,16 @@ def pull_inbox(days: int = 14, project_id: str = "default") -> dict:
     messages  = inbox.Items
     messages.Sort("[ReceivedTime]", True)
 
-    since = datetime.now() - timedelta(days=days)
     conn  = get_connection(project_id)
     pulled, skipped = 0, 0
+
+    # 统一转 naive 再比较，避免 aware vs naive TypeError
+    since = datetime.now() - timedelta(days=days)
+
+    def _naive(dt):
+        if isinstance(dt, datetime) and dt.tzinfo is not None:
+            return dt.replace(tzinfo=None)
+        return dt
 
     try:
         for msg in messages:
@@ -36,7 +43,7 @@ def pull_inbox(days: int = 14, project_id: str = "default") -> dict:
                 received = msg.ReceivedTime
                 recv_dt = received if isinstance(received, datetime) \
                     else datetime.fromtimestamp(float(received))
-                if recv_dt < since:
+                if _naive(recv_dt) < since:
                     break
 
                 entry_id = msg.EntryID
