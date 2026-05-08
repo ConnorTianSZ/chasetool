@@ -107,32 +107,43 @@ def _delivered_sql() -> str:
 def _add_material_state_filter(
     conditions: list[str],
     params: list,
-    material_state: str | None,
+    material_states: list[str] | None,
     key_date: str,
 ) -> None:
+    if not material_states:
+        return
     today = date.today().isoformat()
-    if material_state == "delivered":
-        conditions.append(_delivered_sql())
-    elif material_state == "no_oc":
-        conditions.append(_not_delivered_sql())
-        conditions.append("(current_eta IS NULL OR current_eta = '')")
-    elif material_state == "overdue_now":
-        # 应交未交：OC 已过今日
-        conditions.append(_not_delivered_sql())
-        conditions.append("current_eta IS NOT NULL AND current_eta <> '' AND date(current_eta) < date(?)")
-        params.append(today)
-    elif material_state == "overdue_keydate":
-        # 晚于节点：OC 在今日之后但晚于 KEYDATE
-        conditions.append(_not_delivered_sql())
-        conditions.append(
-            "current_eta IS NOT NULL AND current_eta <> '' "
-            "AND date(current_eta) >= date(?) AND date(current_eta) < date(?)"
-        )
-        params.extend([today, key_date])
-    elif material_state == "normal":
-        conditions.append(_not_delivered_sql())
-        conditions.append("current_eta IS NOT NULL AND current_eta <> '' AND date(current_eta) >= date(?)")
-        params.append(key_date)
+    sub_conditions: list[str] = []
+    for material_state in material_states:
+        if material_state == "delivered":
+            sub_conditions.append(f"({_delivered_sql()})")
+        elif material_state == "no_oc":
+            sub_conditions.append(
+                f"({_not_delivered_sql()} AND (current_eta IS NULL OR current_eta = ''))"
+            )
+        elif material_state == "overdue_now":
+            # 应交未交：OC 已过今日
+            sub_conditions.append(
+                f"({_not_delivered_sql()} AND current_eta IS NOT NULL AND current_eta <> '' "
+                f"AND date(current_eta) < date(?))"
+            )
+            params.append(today)
+        elif material_state == "overdue_keydate":
+            # 晚于节点：OC 在今日之后且晚于 KEYDATE
+            sub_conditions.append(
+                f"({_not_delivered_sql()} AND current_eta IS NOT NULL AND current_eta <> '' "
+                f"AND date(current_eta) >= date(?) AND date(current_eta) > date(?))"
+            )
+            params.extend([today, key_date])
+        elif material_state == "normal":
+            # 正常：OC 在今日之后且不晚于 KEYDATE
+            sub_conditions.append(
+                f"({_not_delivered_sql()} AND current_eta IS NOT NULL AND current_eta <> '' "
+                f"AND date(current_eta) >= date(?) AND date(current_eta) <= date(?))"
+            )
+            params.extend([today, key_date])
+    if sub_conditions:
+        conditions.append("(" + " OR ".join(sub_conditions) + ")")
 
 
 @router.get("")
@@ -143,9 +154,9 @@ def list_materials(
     buyer_key:   Optional[list[str]] = Query(None),
     supplier:    Optional[str]  = Query(None),
     status:      Optional[str]  = Query(None),
-    material_state: Optional[str] = Query(None),
-    station_no:  Optional[str]  = Query(None),
-    purchasing_group: Optional[str] = Query(None),
+    material_state: Optional[list[str]] = Query(None),
+    station_no:  Optional[list[str]] = Query(None),
+    purchasing_group: Optional[list[str]] = Query(None),
     is_focus:    Optional[bool] = Query(None),
     overdue:     bool           = Query(False),
     no_eta:      bool           = Query(False),
@@ -176,19 +187,25 @@ def list_materials(
             params.append(status)
         _add_material_state_filter(conditions, params, material_state, effective_key_date)
         if station_no:
-            conditions.append("station_no = ?")
-            params.append(station_no)
+            placeholders = ",".join("?" * len(station_no))
+            conditions.append(f"station_no IN ({placeholders})")
+            params.extend(station_no)
         if purchasing_group:
-            conditions.append("purchasing_group = ?")
-            params.append(purchasing_group.upper())
+            placeholders = ",".join("?" * len(purchasing_group))
+            conditions.append(f"purchasing_group IN ({placeholders})")
+            params.extend(pg.upper() for pg in purchasing_group)
         if is_focus is not None:
             conditions.append("is_focus = ?")
             params.append(1 if is_focus else 0)
         if overdue:
-            # 快捷筛选"仅逾期"：覆盖 overdue_now + overdue_keydate（OC < KEYDATE）
+            # 快捷筛选"仅逾期"：overdue_now（过今日）OR overdue_keydate（晚于节点）
+            _today = date.today().isoformat()
             conditions.append(_not_delivered_sql())
-            conditions.append("current_eta IS NOT NULL AND current_eta <> '' AND date(current_eta) < date(?)")
-            params.append(effective_key_date)
+            conditions.append("current_eta IS NOT NULL AND current_eta <> ''")
+            conditions.append(
+                "(date(current_eta) < date(?) OR date(current_eta) > date(?))"
+            )
+            params.extend([_today, effective_key_date])
         if no_eta:
             conditions.append(_not_delivered_sql())
             conditions.append("(current_eta IS NULL OR current_eta = '')")

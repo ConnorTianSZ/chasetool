@@ -143,40 +143,61 @@
         <div class="filter-bar">
           <input type="text" placeholder="搜索 PO/料号/描述…" x-model="filters.search" @keydown.enter="applyFilter()" style="width:200px;" />
           <input type="text" placeholder="PO号" x-model="filters.po_number" style="width:120px;" />
-          <select x-model="filters.station_no" style="width:100px;">
-            <option value="">全部站号</option>
-            <template x-for="s in filterOptions.stations" :key="s">
-              <option :value="s" x-text="s + ' 站'"></option>
-            </template>
-          </select>
-          <select x-model="filters.purchasing_group" style="width:90px;">
-            <option value="">全部 PGR</option>
-            <template x-for="pg in filterOptions.purchasing_groups" :key="pg">
-              <option :value="pg" x-text="pg"></option>
-            </template>
-          </select>
-          <details class="multi-filter">
+          <details class="multi-filter" x-data="{ q: '' }" @toggle="q=''">
+            <summary x-text="stationFilterLabel"></summary>
+            <div class="multi-filter-menu">
+              <input type="text" x-model="q" placeholder="搜索站号…" class="multi-filter-search" @click.stop @keydown.stop />
+              <template x-for="s in filterOptions.stations.filter(s => !q || String(s).toLowerCase().includes(q.toLowerCase()))" :key="s">
+                <label>
+                  <input type="checkbox" :value="s" x-model="filters.station_no" />
+                  <span x-text="s + ' 站'"></span>
+                </label>
+              </template>
+              <template x-if="filterOptions.stations.filter(s => !q || String(s).toLowerCase().includes(q.toLowerCase())).length === 0">
+                <div class="multi-empty">无匹配</div>
+              </template>
+            </div>
+          </details>
+          <details class="multi-filter" x-data="{ q: '' }" @toggle="q=''">
+            <summary x-text="pgrFilterLabel"></summary>
+            <div class="multi-filter-menu">
+              <input type="text" x-model="q" placeholder="搜索 PGR…" class="multi-filter-search" @click.stop @keydown.stop />
+              <template x-for="pg in filterOptions.purchasing_groups.filter(pg => !q || String(pg).toLowerCase().includes(q.toLowerCase()))" :key="pg">
+                <label>
+                  <input type="checkbox" :value="pg" x-model="filters.purchasing_group" />
+                  <span x-text="pg"></span>
+                </label>
+              </template>
+              <template x-if="filterOptions.purchasing_groups.filter(pg => !q || String(pg).toLowerCase().includes(q.toLowerCase())).length === 0">
+                <div class="multi-empty">无匹配</div>
+              </template>
+            </div>
+          </details>
+          <details class="multi-filter" x-data="{ q: '' }" @toggle="q=''">
             <summary x-text="buyerFilterLabel"></summary>
             <div class="multi-filter-menu">
-              <template x-for="b in filterOptions.buyers" :key="b.key">
+              <input type="text" x-model="q" placeholder="搜索采购员…" class="multi-filter-search" @click.stop @keydown.stop />
+              <template x-for="b in filterOptions.buyers.filter(b => !q || (b.name||'').toLowerCase().includes(q.toLowerCase()) || (b.email||'').toLowerCase().includes(q.toLowerCase()))" :key="b.key">
                 <label>
                   <input type="checkbox" :value="b.key" x-model="filters.buyer_key" />
                   <span x-text="b.name || b.email || '未知'"></span>
                 </label>
               </template>
-              <template x-if="filterOptions.buyers.length===0">
+              <template x-if="filterOptions.buyers.filter(b => !q || (b.name||'').toLowerCase().includes(q.toLowerCase()) || (b.email||'').toLowerCase().includes(q.toLowerCase())).length === 0">
                 <div class="multi-empty">暂无采购员</div>
               </template>
             </div>
           </details>
-          <select x-model="filters.material_state">
-            <option value="">全部状态</option>
-            <option value="normal">正常</option>
-            <option value="overdue_now">应交未交</option>
-            <option value="overdue_keydate">晚于节点</option>
-            <option value="delivered">已交货</option>
-            <option value="no_oc">无OC</option>
-          </select>
+          <details class="multi-filter">
+            <summary x-text="stateFilterLabel"></summary>
+            <div class="multi-filter-menu">
+              <label><input type="checkbox" value="overdue_now" x-model="filters.material_state" /><span>应交未交</span></label>
+              <label><input type="checkbox" value="overdue_keydate" x-model="filters.material_state" /><span>晚于节点</span></label>
+              <label><input type="checkbox" value="normal" x-model="filters.material_state" /><span>正常</span></label>
+              <label><input type="checkbox" value="no_oc" x-model="filters.material_state" /><span>无OC</span></label>
+              <label><input type="checkbox" value="delivered" x-model="filters.material_state" /><span>已交货</span></label>
+            </div>
+          </details>
           <label class="check-label"><input type="checkbox" x-model="filters.overdue" /> 仅逾期</label>
           <label class="check-label"><input type="checkbox" x-model="filters.no_eta" /> 无交期</label>
           <label class="check-label"><input type="checkbox" :checked="filters.is_focus==='true'" @change="filters.is_focus=($event.target.checked?'true':'')" /> 重点</label>
@@ -226,7 +247,7 @@
             </thead>
             <tbody>
               <template x-for="item in items" :key="item.id">
-                <tr :class="{'is-focus': item.is_focus, 'is-overdue': isOverdue(item), 'is-no-eta': noEta(item)}">
+                <tr :class="{'is-focus': item.is_focus, 'is-overdue': isOverdue(item), 'is-overdue-now': isOverdueNow(item), 'is-overdue-keydate': isOverdueKeydate(item), 'is-no-eta': noEta(item)}">
                   <td><input type="checkbox" :checked="selected.has(item.id)" @change="toggleSelect(item.id)" /></td>
                   <td x-text="item.po_number"></td>
                   <td x-text="item.item_no"></td>

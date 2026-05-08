@@ -114,7 +114,7 @@ document.addEventListener('alpine:init', () => {
     keyDate: '',
     chaseView: { count: true, chaseDate: true, feedbackDate: true },
 
-    filters: { search:'', po_number:'', material_state:'', supplier:'', station_no:'', purchasing_group:'', buyer_key:[], is_focus:'', overdue:false, no_eta:false },
+    filters: { search:'', po_number:'', material_state:[], supplier:'', station_no:[], purchasing_group:[], buyer_key:[], is_focus:'', overdue:false, no_eta:false },
 
     showDetail: false, detailItem: null, detailHistory: [],
     showChaseModal: false, chaseDrafts: [], chaseSkipped: [], chaseMode: 'draft', chaseLoading: false,
@@ -132,6 +132,18 @@ document.addEventListener('alpine:init', () => {
     get buyerFilterLabel() {
       const count = this.filters.buyer_key.length;
       return count ? `采购员 ${count}` : '全部采购员';
+    },
+    get stateFilterLabel() {
+      const c = this.filters.material_state.length;
+      return c ? `状态 ${c}` : '全部状态';
+    },
+    get stationFilterLabel() {
+      const c = this.filters.station_no.length;
+      return c ? `站号 ${c}` : '全部站号';
+    },
+    get pgrFilterLabel() {
+      const c = this.filters.purchasing_group.length;
+      return c ? `PGR ${c}` : '全部 PGR';
     },
 
     async loadFilterOptions() {
@@ -177,7 +189,7 @@ document.addEventListener('alpine:init', () => {
     },
 
     applyFilter() { this.page = 1; this.selected = new Set(); this.load(); },
-    resetFilter()  { this.filters = { search:'', po_number:'', material_state:'', supplier:'', station_no:'', purchasing_group:'', buyer_key:[], is_focus:'', overdue:false, no_eta:false }; this.applyFilter(); },
+    resetFilter()  { this.filters = { search:'', po_number:'', material_state:[], supplier:'', station_no:[], purchasing_group:[], buyer_key:[], is_focus:'', overdue:false, no_eta:false }; this.applyFilter(); },
 
     toggleSelect(id) {
       this.selected.has(id) ? this.selected.delete(id) : this.selected.add(id);

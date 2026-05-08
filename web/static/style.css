@@ -111,9 +111,15 @@ tbody tr:hover { background: #f0f7ff; }
 tbody td { padding: 6px 9px; vertical-align: middle; }
 .td-desc { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-tr.is-focus   { background: #fffbeb !important; }
-tr.is-overdue td:first-child { border-left: 3px solid var(--danger); }
-tr.is-no-eta  td:first-child { border-left: 3px solid #9333ea; }
+tr.is-focus         { background: #fffbeb !important; }
+tr.is-overdue-now   { background: #fff1f2; }
+tr.is-overdue-now   td:first-child { border-left: 3px solid #dc2626; }
+tr.is-overdue-keydate { background: #fff7ed; }
+tr.is-overdue-keydate td:first-child { border-left: 3px solid #ea580c; }
+tr.is-overdue       td:first-child { border-left: 3px solid var(--danger); }
+tr.is-no-eta        td:first-child { border-left: 3px solid #9333ea; }
+.multi-filter-search { width: 100%; box-sizing: border-box; padding: 4px 7px; border: 1px solid var(--gray-300); border-radius: 4px; font-size: 12px; margin-bottom: 4px; outline: none; display: block; }
+.multi-filter-search:focus { border-color: var(--primary); }
 
 /* ── Badge ── */
 .badge { display: inline-block; padding: 2px 7px; border-radius: 99px; font-size: 11px; font-weight: 600; white-space: nowrap; }

@@ -88,8 +88,8 @@ def derive_material_state(row: dict[str, Any], key_date: str | date | datetime |
     if current_eta < today:
         return {"code": "overdue_now", "label": "应交未交", "badge": "badge-overdue-now"}
 
-    # OC 日期晚于项目关键节点（将来交货但无法满足项目需求）
-    if current_eta < effective_key_date:
+    # OC 日期晚于项目关键节点（将来交货但晚于项目节点，无法满足项目需求）
+    if current_eta > effective_key_date:
         return {"code": "overdue_keydate", "label": "晚于节点", "badge": "badge-overdue-keydate"}
 
     return {"code": "normal", "label": "正常", "badge": "badge-open"}
