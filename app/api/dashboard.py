@@ -33,7 +33,7 @@ EXPORT_STATE_ORDER = [
 class LeadBuyerExportDraftRequest(BaseModel):
     buyer_keys: list[str] = Field(default_factory=list)
     include_states: list[str] = Field(default_factory=lambda: list(EXPORT_STATE_ORDER))
-    evidence_by: str = "supplier"
+    eta_source: str = "current_eta"
     key_date: Optional[str] = None
     to: str = ""
     cc: str = ""
@@ -50,7 +50,22 @@ def _get_dashboard_key_date(conn, key_date: str | None = None) -> str:
     return clean_date_value(row["value"]) if row and row["value"] else date.today().isoformat()
 
 
-def _load_enriched_materials(project_id: str, key_date: str | None = None) -> tuple[list[dict], str]:
+def _apply_eta_source(row: dict, eta_source: str) -> dict:
+    """当 eta_source='supplier_eta' 时，用 supplier_eta 替换 current_eta（空则 fallback）。"""
+    if eta_source != "supplier_eta":
+        return row
+    s_eta = clean_date_value(row.get("supplier_eta"))
+    c_eta = clean_date_value(row.get("current_eta"))
+    row = dict(row)
+    row["current_eta"] = s_eta if s_eta else c_eta
+    return row
+
+
+def _load_enriched_materials(
+    project_id: str,
+    key_date: str | None = None,
+    eta_source: str = "current_eta",
+) -> tuple[list[dict], str]:
     pgr_map = load_pgr_map()
     conn = get_connection(project_id)
     try:
@@ -58,10 +73,11 @@ def _load_enriched_materials(project_id: str, key_date: str | None = None) -> tu
         rows = conn.execute("SELECT * FROM materials").fetchall()
     finally:
         conn.close()
-    return (
-        [enrich_material_row(dict(r), effective_key_date, pgr_map) for r in rows],
-        effective_key_date,
-    )
+    enriched = []
+    for r in rows:
+        row = _apply_eta_source(dict(r), eta_source)
+        enriched.append(enrich_material_row(row, effective_key_date, pgr_map))
+    return enriched, effective_key_date
 
 
 def _is_open_material(item: dict) -> bool:
@@ -282,12 +298,12 @@ def chase_stats(project_id: str = FPath(...)):
 def lead_buyer(
     project_id: str = FPath(...),
     key_date: str | None = Query(None),
-    evidence_by: str = Query("supplier"),
+    eta_source: str = Query("current_eta"),
 ):
-    if evidence_by not in {"supplier", "manufacturer"}:
-        evidence_by = "supplier"
+    if eta_source not in {"current_eta", "supplier_eta"}:
+        eta_source = "current_eta"
 
-    materials, effective_key_date = _load_enriched_materials(project_id, key_date)
+    materials, effective_key_date = _load_enriched_materials(project_id, key_date, eta_source)
     buyer_map: dict[str, dict] = {}
     summary = {
         "no_oc": 0,
@@ -297,9 +313,7 @@ def lead_buyer(
         "eta_mismatch": 0,
         "focus": 0,
     }
-    global_suppliers: Counter = Counter()
     global_manufacturers: Counter = Counter()
-    late_counter: Counter = Counter()
 
     for item in materials:
         if not _is_open_material(item):
@@ -336,8 +350,6 @@ def lead_buyer(
         elif state == "overdue_keydate":
             buyer["overdue_keydate_count"] += 1
             summary["overdue_keydate"] += 1
-            late_name = _display_name(item.get(evidence_by), "未知")
-            late_counter[late_name] += 1
         elif state == "eta_mismatch":
             buyer["eta_mismatch_count"] += 1
             summary["eta_mismatch"] += 1
@@ -350,19 +362,14 @@ def lead_buyer(
             summary["focus"] += 1
 
         if _is_risk_material(item):
-            supplier = _display_name(item.get("supplier"), "未知供应商")
             manufacturer = _display_name(item.get("manufacturer"), "未知制造商")
-            buyer["_suppliers"][supplier] += 1
             buyer["_manufacturers"][manufacturer] += 1
-            global_suppliers[supplier] += 1
             global_manufacturers[manufacturer] += 1
 
     buyer_rows = []
     for buyer in buyer_map.values():
         row = dict(buyer)
-        suppliers = row.pop("_suppliers")
         manufacturers = row.pop("_manufacturers")
-        row["top_suppliers"] = _counter_top(suppliers, limit=3)
         row["top_manufacturers"] = _counter_top(manufacturers, limit=3)
         buyer_rows.append(row)
 
@@ -389,10 +396,8 @@ def lead_buyer(
         "key_date": effective_key_date,
         "summary_cards": cards,
         "buyer_rows": buyer_rows,
-        "top_suppliers": _counter_top(global_suppliers, limit=10),
         "top_manufacturers": _counter_top(global_manufacturers, limit=10),
-        "late_evidence": _counter_top(late_counter, limit=20),
-        "config": {"evidence_by": evidence_by},
+        "config": {"eta_source": eta_source},
     }
 
 
@@ -405,7 +410,8 @@ def export_lead_buyer_draft(
     if not include_states:
         include_states = set(EXPORT_STATE_ORDER)
 
-    materials, effective_key_date = _load_enriched_materials(project_id, body.key_date)
+    eta_source = body.eta_source if body.eta_source in {"current_eta", "supplier_eta"} else "current_eta"
+    materials, effective_key_date = _load_enriched_materials(project_id, body.key_date, eta_source)
     selected = _filter_export_materials(
         materials,
         buyer_keys=set(body.buyer_keys or []),
@@ -594,3 +600,135 @@ def time_node_drilldown(
         return result
     finally:
         conn.close()
+
+
+# ── Pivot A：Buyer × Doc.Date × Value ────────────────────────────────────────
+
+
+@router.get("/pivot_buyer_docdate")
+def pivot_buyer_docdate(
+    project_id: str = FPath(...),
+    value_type: str = Query("overdue_keydate"),
+    eta_source: str = Query("current_eta"),
+    key_date: str | None = Query(None),
+):
+    """
+    行 = Buyer，列 = Doc.Date（MM/DD），值 = 指定 value_type 的物料数。
+    value_type: no_oc | overdue_now | overdue_keydate
+    """
+    if value_type not in {"no_oc", "overdue_now", "overdue_keydate"}:
+        value_type = "overdue_keydate"
+    if eta_source not in {"current_eta", "supplier_eta"}:
+        eta_source = "current_eta"
+
+    materials, effective_key_date = _load_enriched_materials(project_id, key_date, eta_source)
+
+    cells: dict[str, dict[str, int]] = {}
+    date_set: set[str] = set()
+    buyer_order: list[str] = []
+
+    for item in materials:
+        if not _is_open_material(item):
+            continue
+        state = item.get("material_state")
+        hit = (state == value_type)
+        if not hit:
+            continue
+
+        buyer = item.get("buyer_display") or "未知"
+        raw_date = item.get("order_date") or ""
+        if raw_date and len(raw_date) >= 10:
+            try:
+                from datetime import date as _date
+                d = _date.fromisoformat(raw_date[:10])
+                col = f"{d.month:02d}/{d.day:02d}"
+            except ValueError:
+                col = raw_date[:10]
+        else:
+            col = raw_date or "无日期"
+
+        if buyer not in cells:
+            cells[buyer] = {}
+            buyer_order.append(buyer)
+        cells[buyer][col] = cells[buyer].get(col, 0) + 1
+        date_set.add(col)
+
+    def _sort_mmdd(s: str):
+        try:
+            m, d = s.split("/")
+            return (int(m), int(d))
+        except Exception:
+            return (99, 99)
+
+    dates = sorted(date_set, key=_sort_mmdd)
+    row_totals = {b: sum(cells[b].values()) for b in buyer_order}
+    col_totals = {dt: sum(cells[b].get(dt, 0) for b in buyer_order) for dt in dates}
+    buyer_order.sort(key=lambda b: -row_totals[b])
+
+    return {
+        "key_date": effective_key_date,
+        "value_type": value_type,
+        "eta_source": eta_source,
+        "buyers": buyer_order,
+        "dates": dates,
+        "cells": cells,
+        "row_totals": row_totals,
+        "col_totals": col_totals,
+    }
+
+
+# ── Pivot B：Buyer → Manufacturer × 晚于节点 ─────────────────────────────────
+
+
+@router.get("/pivot_buyer_manufacturer")
+def pivot_buyer_manufacturer(
+    project_id: str = FPath(...),
+    eta_source: str = Query("current_eta"),
+    key_date: str | None = Query(None),
+):
+    """行 = Buyer（可展开）→ Manufacturer，值 = 晚于节点数。"""
+    if eta_source not in {"current_eta", "supplier_eta"}:
+        eta_source = "current_eta"
+
+    materials, effective_key_date = _load_enriched_materials(project_id, key_date, eta_source)
+
+    buyer_map: dict[str, dict] = {}
+
+    for item in materials:
+        if not _is_open_material(item):
+            continue
+        if item.get("material_state") != "overdue_keydate":
+            continue
+
+        buyer = item.get("buyer_display") or "未知"
+        buyer_email = item.get("buyer_email") or ""
+        buyer_key_val = item.get("buyer_key") or ("name:" + buyer.lower())
+        mfr = _display_name(item.get("manufacturer"), "未知制造商")
+
+        if buyer not in buyer_map:
+            buyer_map[buyer] = {
+                "buyer": buyer,
+                "buyer_key": buyer_key_val,
+                "buyer_email": buyer_email,
+                "total": 0,
+                "_mfr": Counter(),
+            }
+        buyer_map[buyer]["total"] += 1
+        buyer_map[buyer]["_mfr"][mfr] += 1
+
+    result = []
+    for entry in buyer_map.values():
+        mfr_counter = entry.pop("_mfr")
+        entry["manufacturers"] = [
+            {"name": name, "count": cnt}
+            for name, cnt in sorted(mfr_counter.items(), key=lambda kv: -kv[1])
+        ]
+        result.append(entry)
+
+    result.sort(key=lambda r: -r["total"])
+
+    return {
+        "key_date": effective_key_date,
+        "eta_source": eta_source,
+        "rows": result,
+    }
