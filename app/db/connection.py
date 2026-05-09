@@ -90,6 +90,9 @@ _MIGRATION_STMTS = [
     "ALTER TABLE chase_log ADD COLUMN marker_tag TEXT",
     # Phase 3: inbound_emails 关联 chase_log
     "ALTER TABLE inbound_emails ADD COLUMN chase_log_id INTEGER",
+    # Phase 4: 采购员加急后手工记录的最新交期（不被 Excel 导入覆盖）
+    "ALTER TABLE materials ADD COLUMN urgent_feedback_eta DATE",
+    "ALTER TABLE materials ADD COLUMN urgent_feedback_note TEXT",
 ]
 
 _PROJECT_SETTINGS_SQL = """

@@ -84,6 +84,25 @@ def derive_material_state(row: dict[str, Any], key_date: str | date | datetime |
     if not current_eta:
         return {"code": "no_oc", "label": "无OC", "badge": "badge-no-eta"}
 
+    # current_eta 是否本身需要加急
+    current_needs_chase = (current_eta < today) or (current_eta > effective_key_date)
+
+    # 采购员手工录入的催后更新交期
+    urgent_eta = clean_date_value(row.get("urgent_feedback_eta"))
+
+    if urgent_eta and current_needs_chase:
+        urgent_needs_chase = (urgent_eta < today) or (urgent_eta > effective_key_date)
+        if not urgent_needs_chase:
+            # SAP 交期看起来有问题，但采购员已确认催后新交期可接受
+            # → 不触发催货，显示"交期与反馈不一致"提示其他部门
+            return {"code": "eta_mismatch", "label": "交期与反馈不一致", "badge": "badge-eta-mismatch"}
+        else:
+            # 连催后确认的交期也超期 → 按 urgent_eta 判断严重程度
+            if urgent_eta < today:
+                return {"code": "overdue_now", "label": "应交未交", "badge": "badge-overdue-now"}
+            return {"code": "overdue_keydate", "label": "晚于节点", "badge": "badge-overdue-keydate"}
+
+    # 无 urgent_feedback_eta，走原有逻辑
     # 供应商已超过自身承诺日期（应交未交）
     if current_eta < today:
         return {"code": "overdue_now", "label": "应交未交", "badge": "badge-overdue-now"}
@@ -150,6 +169,7 @@ def enrich_material_row(
         "current_eta",
         "supplier_eta",
         "statical_delivery_date",
+        "urgent_feedback_eta",
     ):
         if field in item:
             item[field] = clean_date_value(item.get(field))
@@ -170,4 +190,5 @@ def enrich_material_row(
     item["display_supplier_eta"] = format_display_date(item.get("supplier_eta"))
     item["display_last_chased_at"] = format_display_date(item.get("last_chased_at"))
     item["display_supplier_feedback_time"] = format_display_date(item.get("supplier_feedback_time"))
+    item["display_urgent_feedback_eta"] = format_display_date(item.get("urgent_feedback_eta"))
     return item

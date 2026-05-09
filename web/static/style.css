@@ -118,6 +118,8 @@ tr.is-overdue-keydate { background: #fff7ed; }
 tr.is-overdue-keydate td:first-child { border-left: 3px solid #ea580c; }
 tr.is-overdue       td:first-child { border-left: 3px solid var(--danger); }
 tr.is-no-eta        td:first-child { border-left: 3px solid #9333ea; }
+tr.is-eta-mismatch  { background: #fffbeb; }
+tr.is-eta-mismatch  td:first-child { border-left: 3px solid #d97706; }
 .multi-filter-search { width: 100%; box-sizing: border-box; padding: 4px 7px; border: 1px solid var(--gray-300); border-radius: 4px; font-size: 12px; margin-bottom: 4px; outline: none; display: block; }
 .multi-filter-search:focus { border-color: var(--primary); }
 
@@ -130,7 +132,8 @@ tr.is-no-eta        td:first-child { border-left: 3px solid #9333ea; }
 .badge-overdue         { background: #fee2e2; color: #b91c1c; }  /* 兼容旧数据 */
 .badge-overdue-now     { background: #fecaca; color: #991b1b; } /* 应交未交（深红） */
 .badge-overdue-keydate { background: #fed7aa; color: #c2410c; } /* 晚于节点（橙色） */
-.badge-no-eta    { background: #f3e8ff; color: #7e22ce; }
+.badge-no-eta       { background: #f3e8ff; color: #7e22ce; }
+.badge-eta-mismatch { background: #fef3c7; color: #b45309; } /* 交期与反馈不一致（琥珀色） */
 
 /* ── 筛选 / 工具栏 ── */
 .filter-bar { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; padding: 10px 14px; border-bottom: 1px solid var(--gray-200); background: #fff; }

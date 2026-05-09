@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 SOURCE_PRIORITY: dict[str, int] = {
+    "buyer_manual":  4,   # 采购员手工录入（最高优先级，不被任何导入覆盖）
     "email_reply":   3,
     "chat_command":  2,
     "manual_import": 1,
@@ -16,6 +17,9 @@ SENSITIVE_FIELDS = {
     "supplier_remarks",
     "status",
     "is_focus",
+    # 加急后买方手工确认的交期：只允许 buyer_manual 写入，不被 Excel/email 覆盖
+    "urgent_feedback_eta",
+    "urgent_feedback_note",
 }
 
 FACT_FIELDS = {

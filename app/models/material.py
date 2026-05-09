@@ -113,6 +113,9 @@ class MaterialUpdate(BaseModel):
     is_focus: Optional[bool] = None
     focus_reason: Optional[str] = None
     escalation_flag: Optional[bool] = None
+    # 采购员加急跟进后手工记录的最新交期（不被 Excel 导入覆盖）
+    urgent_feedback_eta: Optional[date] = None
+    urgent_feedback_note: Optional[str] = None
 
 
 class FieldUpdateRead(BaseModel):

@@ -239,6 +239,7 @@
                 <th>未交数量</th>
                 <th>下单日期</th>
                 <th>确认交期</th>
+                <th style="color:#d97706;">催后更新交期</th>
                 <th>状态</th>
                 <th>催货状态</th>
                 <th>采购员</th>
@@ -247,7 +248,7 @@
             </thead>
             <tbody>
               <template x-for="item in items" :key="item.id">
-                <tr :class="{'is-focus': item.is_focus, 'is-overdue': isOverdue(item), 'is-overdue-now': isOverdueNow(item), 'is-overdue-keydate': isOverdueKeydate(item), 'is-no-eta': noEta(item)}">
+                <tr :class="{'is-focus': item.is_focus, 'is-overdue': isOverdue(item), 'is-overdue-now': isOverdueNow(item), 'is-overdue-keydate': isOverdueKeydate(item), 'is-no-eta': noEta(item), 'is-eta-mismatch': isEtaMismatch(item)}">
                   <td><input type="checkbox" :checked="selected.has(item.id)" @change="toggleSelect(item.id)" /></td>
                   <td x-text="item.po_number"></td>
                   <td x-text="item.item_no"></td>
@@ -269,6 +270,14 @@
                     </template>
                   </td>
                   <td>
+                    <template x-if="item.display_urgent_feedback_eta">
+                      <span style="color:#d97706;font-weight:600;" x-text="item.display_urgent_feedback_eta"></span>
+                    </template>
+                    <template x-if="!item.display_urgent_feedback_eta">
+                      <span style="color:#d1d5db;">—</span>
+                    </template>
+                  </td>
+                  <td>
                     <span class="badge" :class="statusBadge(item)" x-text="item.material_state_label || item.status"></span>
                   </td>
                   <td><span class="badge" :class="item.chase_badge || 'badge-cancelled'" x-text="chaseDisplay(item)"></span></td>
@@ -282,7 +291,7 @@
                 </tr>
               </template>
               <template x-if="items.length === 0 && !loading">
-                <tr><td colspan="17" class="empty"><div class="icon">📋</div>暂无数据，请先导入 Excel</td></tr>
+                <tr><td colspan="18" class="empty"><div class="icon">📋</div>暂无数据，请先导入 Excel</td></tr>
               </template>
             </tbody>
           </table>
@@ -341,6 +350,27 @@
                     <div>
                       <label class="field-label">供应商备注</label>
                       <input type="text" x-model="detailItem.supplier_remarks" style="width:100%;margin-top:4px;" placeholder="无" />
+                    </div>
+                  </div>
+
+                  <!-- 催后更新交期（买方手工录入，不被 Excel 覆盖） -->
+                  <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:10px 14px;margin:10px 0;">
+                    <div style="font-size:12px;font-weight:700;color:#b45309;margin-bottom:8px;">🔔 催后更新交期（采购员手工确认，不受 Excel 导入影响）</div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                      <div>
+                        <label class="field-label">催后更新交期</label>
+                        <input type="date" x-model="detailItem.urgent_feedback_eta" style="width:100%;margin-top:4px;" />
+                      </div>
+                      <div>
+                        <label class="field-label">备注说明</label>
+                        <input type="text" x-model="detailItem.urgent_feedback_note" style="width:100%;margin-top:4px;" placeholder="如：口头确认，待书面" />
+                      </div>
+                    </div>
+                    <div style="font-size:11px;color:#92400e;margin-top:6px;">
+                      当前：<span x-text="detailItem.display_urgent_feedback_eta || '未设置'" style="font-weight:600;"></span>
+                      <template x-if="detailItem.urgent_feedback_note">
+                        <span x-text="' — ' + detailItem.urgent_feedback_note"></span>
+                      </template>
                     </div>
                   </div>
 

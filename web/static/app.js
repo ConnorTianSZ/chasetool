@@ -206,7 +206,8 @@ document.addEventListener('alpine:init', () => {
     },
     isOverdueNow(item)     { return item.material_state === 'overdue_now'; },
     isOverdueKeydate(item) { return item.material_state === 'overdue_keydate'; },
-    noEta(item)  { return item.material_state === 'no_oc'; },
+    noEta(item)       { return item.material_state === 'no_oc'; },
+    isEtaMismatch(item) { return item.material_state === 'eta_mismatch'; },
     statusBadge(item) { return item.material_state_badge || ({open:'badge-open',delivered:'badge-delivered',cancelled:'badge-cancelled',on_hold:'badge-on_hold'})[item.status] || 'badge-open'; },
     formatDate(value) {
       if (!value) return '';
@@ -248,12 +249,24 @@ document.addEventListener('alpine:init', () => {
 
     async saveDetail() {
       try {
+        // 常规字段：source=chat_command
         await api('PATCH', this.purl(`/materials/${this.detailItem.id}`), {
           current_eta: this.detailItem.current_eta || null,
           supplier_eta: this.detailItem.supplier_eta || null,
           supplier_remarks: this.detailItem.supplier_remarks || null,
           status: this.detailItem.status,
         });
+        // 催后更新交期：source=buyer_manual（优先级最高，不被 Excel/邮件覆盖）
+        const urgentPayload = {};
+        if (this.detailItem.urgent_feedback_eta !== undefined) {
+          urgentPayload.urgent_feedback_eta = this.detailItem.urgent_feedback_eta || null;
+        }
+        if (this.detailItem.urgent_feedback_note !== undefined) {
+          urgentPayload.urgent_feedback_note = this.detailItem.urgent_feedback_note || null;
+        }
+        if (Object.keys(urgentPayload).length > 0) {
+          await api('PATCH', this.purl(`/materials/${this.detailItem.id}?source=buyer_manual`), urgentPayload);
+        }
         toast('已保存', 'success'); this.showDetail = false; this.load();
       } catch (e) { toast(e.message, 'error'); }
     },
