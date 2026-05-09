@@ -31,7 +31,7 @@ FACT_FIELDS = {
     "position_text1", "position_text2", "statical_delivery_date",
 }
 
-_SOURCE_COLUMNS = {"current_eta_source", "supplier_remarks_source"}
+_SOURCE_COLUMNS = {"current_eta_source", "supplier_eta_source", "supplier_remarks_source"}
 
 
 def _get_priority(source: str) -> int:
@@ -61,7 +61,10 @@ def try_update_field(
     old_value = row[0]
     old_source = current_source or row[1]
 
-    if field_name in SENSITIVE_FIELDS and field_name not in FACT_FIELDS:
+    if field_name == "current_eta":
+        if source != "manual_import":
+            return False, "field current_eta is managed by SAP Excel import; use supplier_eta instead"
+    elif field_name in SENSITIVE_FIELDS and field_name not in FACT_FIELDS:
         if old_source and _get_priority(source) < _get_priority(old_source):
             return False, (
                 f"field {field_name} blocked: existing source={old_source} "

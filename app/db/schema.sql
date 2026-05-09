@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS materials (
     current_eta             DATE,
     current_eta_source      TEXT,
     supplier_eta            DATE,
+    supplier_eta_source     TEXT,
     supplier_feedback_time  DATETIME,
     supplier_remarks        TEXT,
     supplier_remarks_source TEXT,

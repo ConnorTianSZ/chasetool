@@ -4,6 +4,14 @@ from app.db.connection import get_connection
 from app.update_policy import try_update_field
 
 
+ALLOWED_CHAT_UPDATE_FIELDS = {
+    "supplier_eta",
+    "supplier_remarks",
+    "status",
+    "is_focus",
+}
+
+
 def update_material_field(
     po_number: str,
     item_no: str,
@@ -14,6 +22,15 @@ def update_material_field(
     project_id: str = "default",
 ) -> dict:
     """更新单字段（走优先级治理）"""
+    if field == "current_eta":
+        return {
+            "ok": False,
+            "reason": "current_eta 来自 SAP Excel 导入，请改用 supplier_eta 记录供应商反馈交期",
+        }
+    if field not in ALLOWED_CHAT_UPDATE_FIELDS:
+        allowed = ", ".join(sorted(ALLOWED_CHAT_UPDATE_FIELDS))
+        return {"ok": False, "reason": f"字段 {field} 不允许通过 Chat 更新；允许字段: {allowed}"}
+
     conn = get_connection(project_id)
     try:
         cur = conn.execute(

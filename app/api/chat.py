@@ -36,8 +36,9 @@ SYSTEM_PROMPT = """你是 BMG-XCN/PUL ChaseBase 采购助手。
 3. get_material(po_number, item_no) — 获取单个物料详情
 4. query_aggregates(group_by, filters) — 聚合统计，group_by 可选 status/supplier/buyer_email/buyer_name
 5. update_material_field(po_number, item_no, field, value)
-   — 更新物料字段。field 可选: current_eta, supplier_eta, supplier_remarks, status, is_focus
-   — 示例：{"tool": "update_material_field", "args": {"po_number": "4500012345", "item_no": "10", "field": "current_eta", "value": "2025-06-30"}}
+   — 更新物料字段。field 可选: supplier_eta, supplier_remarks, status, is_focus
+   — current_eta 来自 SAP Excel 导入，不允许通过 Chat 修改；供应商反馈交期请写 supplier_eta
+   — 示例：{"tool": "update_material_field", "args": {"po_number": "4500012345", "item_no": "10", "field": "supplier_eta", "value": "2025-06-30"}}
 6. mark_focus(po_number, item_no, focus)
    — 标记或取消重点物料。focus=true 打标，focus=false 取消。
    示例：{"tool": "mark_focus", "args": {"po_number": "4500012345", "item_no": "10", "focus": true}}

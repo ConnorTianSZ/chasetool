@@ -172,7 +172,6 @@ def _apply_single_item(conn, item: dict, source_ref, now_iso: str) -> dict:
     }
     if new_eta:
         updates["supplier_eta"] = new_eta
-        updates["current_eta"]  = new_eta
     if remarks:
         updates["supplier_remarks"] = remarks
 

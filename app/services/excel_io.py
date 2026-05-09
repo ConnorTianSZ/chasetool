@@ -164,6 +164,8 @@ def import_excel(file_path: str | Path, project_id: str = "default") -> dict:
             existing = cur.fetchone()
 
             if existing is None:
+                if data.get("current_eta"):
+                    data["current_eta_source"] = "manual_import"
                 cols = list(data.keys())
                 placeholders = ", ".join(["?"] * len(cols))
                 conn.execute(

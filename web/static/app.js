@@ -249,24 +249,12 @@ document.addEventListener('alpine:init', () => {
 
     async saveDetail() {
       try {
-        // 常规字段：source=chat_command
-        await api('PATCH', this.purl(`/materials/${this.detailItem.id}`), {
-          current_eta: this.detailItem.current_eta || null,
+        // 手工维护字段：SAP current_eta 只由 Excel 导入更新
+        await api('PATCH', this.purl(`/materials/${this.detailItem.id}?source=buyer_manual`), {
           supplier_eta: this.detailItem.supplier_eta || null,
           supplier_remarks: this.detailItem.supplier_remarks || null,
           status: this.detailItem.status,
         });
-        // 催后更新交期：source=buyer_manual（优先级最高，不被 Excel/邮件覆盖）
-        const urgentPayload = {};
-        if (this.detailItem.urgent_feedback_eta !== undefined) {
-          urgentPayload.urgent_feedback_eta = this.detailItem.urgent_feedback_eta || null;
-        }
-        if (this.detailItem.urgent_feedback_note !== undefined) {
-          urgentPayload.urgent_feedback_note = this.detailItem.urgent_feedback_note || null;
-        }
-        if (Object.keys(urgentPayload).length > 0) {
-          await api('PATCH', this.purl(`/materials/${this.detailItem.id}?source=buyer_manual`), urgentPayload);
-        }
         toast('已保存', 'success'); this.showDetail = false; this.load();
       } catch (e) { toast(e.message, 'error'); }
     },
