@@ -552,13 +552,14 @@ document.addEventListener('alpine:init', () => {
   }));
 
   // ── Dashboard ────────────────────────────────────────────────────
-  Alpine.data('dashboard', (projectId) => ({
+  Alpine.data('dashboard', (projectId, projectName) => ({
     pid: projectId,
+    pname: projectName || projectId,
     loading: false,
     _charts: {},
 
-    // ── ETA Source（全局，作用于所有看板）
-    etaSource: 'current_eta',
+    // ── ETA Source
+    etaSource: 'current_eta',  // 'current_eta'=SAP交期 | 'supplier_eta'=邮件反馈交期
 
     // ── Key Date
     leadKeyDate: '',
@@ -571,24 +572,28 @@ document.addEventListener('alpine:init', () => {
     sortAsc: false,
     selectedBuyers: new Set(),
 
+    // ── 卡片折叠状态
+    riskChartCollapsed: false,
+    pivotACollapsed: false,
+    pivotBCollapsed: false,
+
     // ── 导出
     showExportDraft: false,
     exportLoading: false,
     exportMode: 'combined',
-    exportForm: {
-      to: '', cc: '', subject: '',
-      includeStates: { no_oc: true, overdue_now: true, overdue_keydate: true, chased_no_feedback: true, eta_mismatch: true },
+    exportForm: { to: '', cc: '', subject: '' },
+    exportElements: {
+      summary: true,
+      buyerTable: true,
+      buyerChart: true,
+      pivotATable: true,
+      pivotAChart: false,
+      pivotBTable: true,
+      pivotBChart: false,
     },
 
-    // ── 时间节点
-    timeNodes: [],
-    timeNodeStats: [],
-    showAddTimeNode: false,
-    newTimeNode: { label: '', node_date: '', color: '#2563eb', sort_order: 0 },
+    // ── 颜色预设（Pivot 图表用）
     colorPresets: ['#2563eb', '#16a34a', '#d97706', '#dc2626', '#7e22ce', '#0d9488', '#ca8a04', '#0891b2'],
-    tnView: 'overview',
-    drilldownData: [],
-    drilldownGroups: [],
 
     // ── Pivot A
     pivotA: null,
@@ -598,7 +603,7 @@ document.addEventListener('alpine:init', () => {
     // ── Pivot B
     pivotB: null,
     pivotBLoading: false,
-    pivotBExpanded: new Set(),
+    pivotBExpanded: {},   // { [buyer]: true/false }
 
     purl(p) { return `/api/projects/${this.pid}${p}`; },
 
@@ -609,7 +614,6 @@ document.addEventListener('alpine:init', () => {
         this.$nextTick(() => this.renderBuyerRiskChart());
       } catch (e) { toast(e.message, 'error'); }
       finally { this.loading = false; }
-      await this.loadTimeNodes();
       await Promise.all([this.loadPivotA(), this.loadPivotB()]);
     },
 
@@ -623,10 +627,13 @@ document.addEventListener('alpine:init', () => {
       } catch (e) { toast(e.message, 'error'); }
     },
 
+    etaLabel() {
+      return this.etaSource === 'supplier_eta' ? '邮件反馈交期' : 'SAP交期';
+    },
+
     // ── 采购员看板排序
     get sortedBuyerRows() {
-      const key = this.sortKey;
-      const asc = this.sortAsc;
+      const key = this.sortKey, asc = this.sortAsc;
       return [...this.buyerRows].sort((a, b) => {
         const va = a[key] ?? 0, vb = b[key] ?? 0;
         if (va === vb) return String(a.buyer_display).localeCompare(String(b.buyer_display));
@@ -657,11 +664,6 @@ document.addEventListener('alpine:init', () => {
 
     get selectedBuyerKeys() { return [...this.selectedBuyers]; },
 
-    selectedStateIds() {
-      return Object.entries(this.exportForm.includeStates)
-        .filter(([, enabled]) => enabled).map(([id]) => id);
-    },
-
     toggleBuyer(key) {
       this.selectedBuyers.has(key) ? this.selectedBuyers.delete(key) : this.selectedBuyers.add(key);
       this.selectedBuyers = new Set(this.selectedBuyers);
@@ -688,61 +690,11 @@ document.addEventListener('alpine:init', () => {
       Alpine.store('nav').openMaterials(filters);
     },
 
-    // ── 导出
-    openExportDraft() {
-      if (!this.selectedBuyers.size) { toast('请先勾选采购员', 'info'); return; }
-      this.exportForm.subject = this.exportForm.subject || `Dashboard follow up - ${this.leadKeyDate || ''}`;
-      this.showExportDraft = true;
-    },
-
-    async exportDashboardDraft() {
-      const includeStates = this.selectedStateIds();
-      if (!includeStates.length) { toast('请至少选择一种状态', 'info'); return; }
-      this.exportLoading = true;
-      try {
-        if (this.exportMode === 'combined') {
-          const result = await api('POST', this.purl('/dashboard/lead_buyer/export_draft'), {
-            buyer_keys: this.selectedBuyerKeys,
-            include_states: includeStates,
-            eta_source: this.etaSource,
-            key_date: this.leadKeyDate,
-            to: this.exportForm.to,
-            cc: this.exportForm.cc,
-            subject: this.exportForm.subject,
-          });
-          toast(`草稿已打开到 Outlook（${result.material_count || 0} 条物料）`, 'success');
-          this.showExportDraft = false;
-        } else {
-          const keys = this.selectedBuyerKeys;
-          let total = 0;
-          for (const bk of keys) {
-            const buyerRow = this.buyerRows.find(r => r.buyer_key === bk);
-            const toAddr = buyerRow?.buyer_email || this.exportForm.to || '';
-            const subj = `Dashboard follow up - ${buyerRow?.buyer_display || bk} - ${this.leadKeyDate || ''}`;
-            const result = await api('POST', this.purl('/dashboard/lead_buyer/export_draft'), {
-              buyer_keys: [bk],
-              include_states: includeStates,
-              eta_source: this.etaSource,
-              key_date: this.leadKeyDate,
-              to: toAddr,
-              cc: this.exportForm.cc,
-              subject: subj,
-            });
-            total += result.material_count || 0;
-            await new Promise(r => setTimeout(r, 120));
-          }
-          toast(`已为 ${keys.length} 位采购员各生成一封草稿（共 ${total} 条物料）`, 'success');
-          this.showExportDraft = false;
-        }
-      } catch (e) { toast(e.message, 'error'); }
-      finally { this.exportLoading = false; }
-    },
-
-    // ── 采购员风险堆叠柱状图
+    // ── 采购员风险图（Clustered，无动效）
     renderBuyerRiskChart() {
       const ctx = document.getElementById('chart-buyer-risk');
       if (!ctx || !this.buyerRows.length) return;
-      if (this._charts.buyerRisk) this._charts.buyerRisk.destroy();
+      if (this._charts.buyerRisk) { this._charts.buyerRisk.destroy(); this._charts.buyerRisk = null; }
       const rows = [...this.buyerRows].sort((a, b) =>
         (b.no_oc_count + b.overdue_now_count + b.overdue_keydate_count) -
         (a.no_oc_count + a.overdue_now_count + a.overdue_keydate_count)
@@ -752,118 +704,19 @@ document.addEventListener('alpine:init', () => {
         data: {
           labels: rows.map(r => r.buyer_display),
           datasets: [
-            { label: '无OC', data: rows.map(r => r.no_oc_count), backgroundColor: '#f59e0b', stack: 'risk' },
-            { label: '应交未交', data: rows.map(r => r.overdue_now_count), backgroundColor: '#dc2626', stack: 'risk' },
-            { label: '晚于节点', data: rows.map(r => r.overdue_keydate_count), backgroundColor: '#7c3aed', stack: 'risk' },
+            { label: '无OC',    data: rows.map(r => r.no_oc_count),          backgroundColor: '#f59e0b' },
+            { label: '应交未交', data: rows.map(r => r.overdue_now_count),    backgroundColor: '#dc2626' },
+            { label: '晚于节点', data: rows.map(r => r.overdue_keydate_count), backgroundColor: '#7c3aed' },
           ],
         },
         options: {
+          animation: { duration: 0 },
           responsive: true,
           plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } } },
           scales: {
-            x: { stacked: true, grid: { display: false }, ticks: { maxRotation: 30 } },
-            y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } },
+            x: { grid: { display: false }, ticks: { maxRotation: 30 } },
+            y: { beginAtZero: true, ticks: { stepSize: 1 } },
           },
-        },
-      });
-    },
-
-    // ── 时间节点
-    async loadTimeNodes() {
-      try {
-        [this.timeNodes, this.timeNodeStats] = await Promise.all([
-          api('GET', this.purl('/dashboard/time_nodes')),
-          api('GET', this.purl('/dashboard/time_node_stats')),
-        ]);
-        this.$nextTick(() => this.renderTimeNodeChart());
-      } catch (e) { toast(e.message, 'error'); }
-    },
-
-    async loadDrilldown(groupBy) {
-      try {
-        const data = await api('GET', this.purl(`/dashboard/time_node_drilldown?group_by=${groupBy}`));
-        this.drilldownData = data;
-        const nameSet = new Set();
-        data.forEach(n => (n.groups || []).forEach(g => nameSet.add(g.name)));
-        const totals = {};
-        data.forEach(n => (n.groups || []).forEach(g => { totals[g.name] = (totals[g.name]||0) + g.due_count; }));
-        this.drilldownGroups = [...nameSet].sort((a,b) => (totals[b]||0) - (totals[a]||0)).slice(0,15);
-        data.forEach(n => { n.groupMap = {}; (n.groups || []).forEach(g => { n.groupMap[g.name] = g.due_count; }); });
-        this.$nextTick(() => this.renderDrilldownChart(groupBy));
-      } catch (e) { toast(e.message, 'error'); }
-    },
-
-    async createTimeNode() {
-      if (!this.newTimeNode.label || !this.newTimeNode.node_date) return;
-      try {
-        await api('POST', this.purl('/dashboard/time_nodes'), { ...this.newTimeNode });
-        toast('时间节点已添加', 'success');
-        this.newTimeNode = { label: '', node_date: '', color: '#2563eb', sort_order: 0 };
-        this.showAddTimeNode = false;
-        await this.loadTimeNodes();
-      } catch (e) { toast(e.message, 'error'); }
-    },
-
-    async editTimeNode(node) {
-      const newLabel = prompt('节点名称：', node.label);
-      if (newLabel === null) return;
-      const newDate = prompt('日期（YYYY-MM-DD）：', node.node_date);
-      if (newDate === null) return;
-      try {
-        await api('PUT', this.purl(`/dashboard/time_nodes/${node.id}`), { label: newLabel, node_date: newDate });
-        toast('已更新', 'success');
-        await this.loadTimeNodes();
-      } catch (e) { toast(e.message, 'error'); }
-    },
-
-    async deleteTimeNode(id) {
-      if (!confirm('确定删除此时间节点？')) return;
-      try {
-        await api('DELETE', this.purl(`/dashboard/time_nodes/${id}`));
-        toast('已删除', 'success');
-        await this.loadTimeNodes();
-      } catch (e) { toast(e.message, 'error'); }
-    },
-
-    renderTimeNodeChart() {
-      const ctx = document.getElementById('chart-time-nodes');
-      if (!ctx || !this.timeNodeStats.length) return;
-      if (this._charts.timeNodes) this._charts.timeNodes.destroy();
-      const colors = this.timeNodeStats.map(n => this.timeNodes.find(t => t.id === n.id)?.color || '#2563eb');
-      this._charts.timeNodes = new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels: this.timeNodeStats.map(n => n.label),
-          datasets: [
-            { label: '到期物料', data: this.timeNodeStats.map(n => n.due_count), backgroundColor: colors },
-            { label: '已逾期', data: this.timeNodeStats.map(n => n.overdue_count), backgroundColor: '#dc2626' },
-          ],
-        },
-        options: {
-          responsive: true,
-          plugins: { legend: { position: 'bottom' } },
-          scales: { x: { grid: { display: false } }, y: { beginAtZero: true, ticks: { stepSize: 1 } } },
-        },
-      });
-    },
-
-    renderDrilldownChart(groupBy) {
-      const chartId = groupBy === 'supplier' ? 'chart-drilldown-supplier' : 'chart-drilldown';
-      const ctx = document.getElementById(chartId);
-      if (!ctx || !this.drilldownData.length) return;
-      const chartKey = groupBy === 'supplier' ? 'drilldownSupplier' : 'drilldown';
-      if (this._charts[chartKey]) this._charts[chartKey].destroy();
-      const labels = this.drilldownData.map(n => n.label);
-      const datasets = this.drilldownGroups.map((name, i) => ({
-        label: name, data: this.drilldownData.map(n => n.groupMap[name] || 0),
-        backgroundColor: this.colorPresets[i % this.colorPresets.length],
-      }));
-      this._charts[chartKey] = new Chart(ctx, {
-        type: 'bar', data: { labels, datasets },
-        options: {
-          responsive: true,
-          plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } } },
-          scales: { x: { grid: { display: false } }, y: { beginAtZero: true, ticks: { stepSize: 1 } } },
         },
       });
     },
@@ -896,16 +749,16 @@ document.addEventListener('alpine:init', () => {
     renderPivotAChart() {
       const ctx = document.getElementById('chart-pivot-a');
       if (!ctx || !this.pivotA?.buyers?.length) return;
-      if (this._charts.pivotA) this._charts.pivotA.destroy();
+      if (this._charts.pivotA) { this._charts.pivotA.destroy(); this._charts.pivotA = null; }
       const buyers = this.pivotA.buyers.slice(0, 15);
-      const values = buyers.map(b => this.pivotA.row_totals[b] || 0);
       this._charts.pivotA = new Chart(ctx, {
         type: 'bar',
         data: {
           labels: buyers,
-          datasets: [{ label: this.pivotAValueLabel(), data: values, backgroundColor: '#7c3aed', borderRadius: 4 }],
+          datasets: [{ label: this.pivotAValueLabel(), data: buyers.map(b => this.pivotA.row_totals[b] || 0), backgroundColor: '#7c3aed', borderRadius: 4 }],
         },
         options: {
+          animation: { duration: 0 },
           indexAxis: 'y',
           responsive: true,
           plugins: { legend: { display: false } },
@@ -927,21 +780,20 @@ document.addEventListener('alpine:init', () => {
     },
 
     togglePivotBBuyer(buyer) {
-      this.pivotBExpanded.has(buyer) ? this.pivotBExpanded.delete(buyer) : this.pivotBExpanded.add(buyer);
-      this.pivotBExpanded = new Set(this.pivotBExpanded);
+      this.pivotBExpanded = { ...this.pivotBExpanded, [buyer]: !this.pivotBExpanded[buyer] };
     },
 
     renderPivotBChart() {
       const ctx = document.getElementById('chart-pivot-b');
       if (!ctx || !this.pivotB?.rows?.length) return;
-      if (this._charts.pivotB) this._charts.pivotB.destroy();
+      if (this._charts.pivotB) { this._charts.pivotB.destroy(); this._charts.pivotB = null; }
       const rows = this.pivotB.rows.slice(0, 12);
       const mfrTotals = {};
       rows.forEach(r => r.manufacturers.forEach(m => { mfrTotals[m.name] = (mfrTotals[m.name]||0) + m.count; }));
       const topMfrs = Object.entries(mfrTotals).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([n])=>n);
       const datasets = topMfrs.map((mfr, i) => ({
         label: mfr,
-        data: rows.map(r => r.manufacturers.find(m => m.name===mfr)?.count || 0),
+        data: rows.map(r => r.manufacturers.find(m=>m.name===mfr)?.count || 0),
         backgroundColor: this.colorPresets[i % this.colorPresets.length],
         stack: 'mfr',
       }));
@@ -949,6 +801,7 @@ document.addEventListener('alpine:init', () => {
         type: 'bar',
         data: { labels: rows.map(r => r.buyer), datasets },
         options: {
+          animation: { duration: 0 },
           responsive: true,
           plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } },
           scales: {
@@ -957,6 +810,147 @@ document.addEventListener('alpine:init', () => {
           },
         },
       });
+    },
+
+    // ── 导出弹窗
+    openExportDraft() {
+      if (!this.selectedBuyers.size) { toast('请先勾选采购员', 'info'); return; }
+      if (!this.exportForm.subject) {
+        this.exportForm.subject = `[${this.pname}]物料概览`;
+      }
+      this.showExportDraft = true;
+    },
+
+    // ── HTML 构建辅助
+    _he(s) {
+      return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    },
+
+    _buildSummaryCardsHtml() {
+      const tds = this.summaryCards.map(c =>
+        `<td style="padding:8px 20px;text-align:center;border:1px solid #e5e7eb;">
+          <div style="font-size:24px;font-weight:700;">${c.value||0}</div>
+          <div style="font-size:12px;color:#6b7280;">${this._he(c.label)}</div>
+        </td>`
+      ).join('');
+      return `<h3 style="margin:16px 0 6px;font-size:14px;">状态概览</h3>
+<table style="border-collapse:collapse;margin-bottom:16px;"><tr>${tds}</tr></table>`;
+    },
+
+    _buildBuyerTableHtml() {
+      const ths = ['采购员','Open','无OC','应交未交','晚于节点','已催未回复','Top风险制造商'];
+      const thStyle = 'border:1px solid #d1d5db;background:#f3f4f6;padding:5px 8px;text-align:left;font-size:12px;';
+      const tdStyle = 'border:1px solid #e5e7eb;padding:4px 8px;font-size:12px;';
+      const hs = ths.map(h=>`<th style="${thStyle}">${h}</th>`).join('');
+      const rows = this.sortedBuyerRows.map(r =>
+        `<tr>
+          <td style="${tdStyle}font-weight:600;">${this._he(r.buyer_display)}</td>
+          <td style="${tdStyle}text-align:center;">${r.open_count||0}</td>
+          <td style="${tdStyle}text-align:center;">${r.no_oc_count||0}</td>
+          <td style="${tdStyle}text-align:center;">${r.overdue_now_count||0}</td>
+          <td style="${tdStyle}text-align:center;">${r.overdue_keydate_count||0}</td>
+          <td style="${tdStyle}text-align:center;">${r.chased_no_feedback_count||0}</td>
+          <td style="${tdStyle}font-size:11px;">${this._he(this.evidenceText(r.top_manufacturers))}</td>
+        </tr>`
+      ).join('');
+      return `<h3 style="margin:16px 0 6px;font-size:14px;">采购员催办看板</h3>
+<table style="border-collapse:collapse;width:100%;margin-bottom:16px;"><thead><tr>${hs}</tr></thead><tbody>${rows}</tbody></table>`;
+    },
+
+    _buildPivotAHtml() {
+      if (!this.pivotA?.buyers?.length) return '';
+      const label = this.pivotAValueLabel();
+      const thStyle = 'border:1px solid #d1d5db;background:#f3f4f6;padding:4px 6px;text-align:center;font-size:11px;';
+      const tdStyle = 'border:1px solid #e5e7eb;padding:4px 6px;text-align:center;font-size:12px;';
+      const dateHs = this.pivotA.dates.map(d=>`<th style="${thStyle}">${d}</th>`).join('');
+      const rows = this.pivotA.buyers.map(b => {
+        const tds = this.pivotA.dates.map(d => {
+          const v = this.pivotACell(b,d);
+          return `<td style="${tdStyle}${v>0?'background:#ede9fe;color:#5b21b6;font-weight:600;':''}">${v||'—'}</td>`;
+        }).join('');
+        return `<tr><td style="border:1px solid #e5e7eb;padding:4px 8px;font-weight:600;font-size:12px;">${this._he(b)}</td>${tds}<td style="${tdStyle}font-weight:700;background:#f9fafb;">${this.pivotA.row_totals[b]||0}</td></tr>`;
+      }).join('');
+      const colTotals = this.pivotA.dates.map(d=>`<td style="${tdStyle}font-weight:700;background:#f3f4f6;">${this.pivotA.col_totals[d]||0}</td>`).join('');
+      const grand = this.pivotA.buyers.reduce((s,b)=>s+(this.pivotA.row_totals[b]||0),0);
+      return `<h3 style="margin:16px 0 6px;font-size:14px;">采购员 × 下单日期（${label}）</h3>
+<table style="border-collapse:collapse;font-size:12px;margin-bottom:16px;">
+<thead><tr><th style="${thStyle}text-align:left;min-width:100px;">采购员</th>${dateHs}<th style="${thStyle}">合计</th></tr></thead>
+<tbody>${rows}<tr><td style="border:1px solid #d1d5db;padding:4px 8px;font-weight:700;background:#f3f4f6;font-size:12px;">合计</td>${colTotals}<td style="${tdStyle}font-weight:700;background:#f3f4f6;">${grand}</td></tr></tbody></table>`;
+    },
+
+    _buildPivotBHtml() {
+      if (!this.pivotB?.rows?.length) return '';
+      const thStyle = 'border:1px solid #d1d5db;background:#f3f4f6;padding:5px 8px;font-size:12px;';
+      const rows = this.pivotB.rows.map(r => {
+        const mfrRows = r.manufacturers.map(m=>
+          `<tr><td style="border:1px solid #e5e7eb;padding:3px 8px 3px 32px;font-size:12px;color:#374151;">└ ${this._he(m.name)}</td><td style="border:1px solid #e5e7eb;padding:3px 6px;text-align:center;font-size:12px;">${m.count}</td></tr>`
+        ).join('');
+        return `<tr style="background:#f9fafb;"><td style="border:1px solid #e5e7eb;padding:5px 8px;font-weight:700;font-size:12px;">${this._he(r.buyer)}</td><td style="border:1px solid #e5e7eb;padding:5px 6px;text-align:center;font-weight:700;color:#7c3aed;font-size:12px;">${r.total}</td></tr>${mfrRows}`;
+      }).join('');
+      return `<h3 style="margin:16px 0 6px;font-size:14px;">采购员 → 制造商 晚于节点明细</h3>
+<table style="border-collapse:collapse;font-size:12px;margin-bottom:16px;">
+<thead><tr><th style="${thStyle}min-width:140px;">采购员/制造商</th><th style="${thStyle}text-align:center;width:80px;">晚于节点</th></tr></thead>
+<tbody>${rows}</tbody></table>`;
+    },
+
+    async buildExportHtml() {
+      const etaLbl = this.etaLabel();
+      let html = `<html><body style="font-family:Arial,'Microsoft YaHei',sans-serif;font-size:13px;color:#111827;">`;
+      html += `<p>各位好，以下为 <strong>${this._he(this.pname)}</strong> 物料概览，KEY DATE：<strong>${this._he(this.leadKeyDate||'—')}</strong>，ETA基准：<strong>${etaLbl}</strong>。</p>`;
+      if (this.exportElements.summary)    html += this._buildSummaryCardsHtml();
+      if (this.exportElements.buyerTable) html += this._buildBuyerTableHtml();
+      if (this.exportElements.buyerChart) {
+        const c = document.getElementById('chart-buyer-risk');
+        if (c) html += `<h3 style="margin:16px 0 6px;font-size:14px;">采购员风险概览</h3><img src="${c.toDataURL()}" style="max-width:600px;display:block;margin-bottom:16px;"/>`;
+      }
+      if (this.exportElements.pivotATable) html += this._buildPivotAHtml();
+      if (this.exportElements.pivotAChart) {
+        const c = document.getElementById('chart-pivot-a');
+        if (c) html += `<img src="${c.toDataURL()}" style="max-width:560px;display:block;margin-bottom:16px;"/>`;
+      }
+      if (this.exportElements.pivotBTable) html += this._buildPivotBHtml();
+      if (this.exportElements.pivotBChart) {
+        const c = document.getElementById('chart-pivot-b');
+        if (c) html += `<img src="${c.toDataURL()}" style="max-width:560px;display:block;margin-bottom:16px;"/>`;
+      }
+      html += `<p style="color:#6b7280;font-size:12px;">— 由系统自动生成，请勿直接回复 —</p></body></html>`;
+      return html;
+    },
+
+    async exportDashboardDraft() {
+      this.exportLoading = true;
+      try {
+        const htmlBody = await this.buildExportHtml();
+        const subject = (this.exportForm.subject || `[${this.pname}]物料概览`).trim();
+        if (this.exportMode === 'combined') {
+          await api('POST', this.purl('/dashboard/export_custom_draft'), {
+            html_body: htmlBody,
+            to: this.exportForm.to,
+            cc: this.exportForm.cc,
+            subject,
+          });
+          toast('邮件草稿已添加到 Outlook', 'success');
+          this.showExportDraft = false;
+        } else {
+          const keys = this.selectedBuyerKeys;
+          const origRows = this.buyerRows;
+          for (const bk of keys) {
+            const buyerRow = origRows.find(r => r.buyer_key === bk);
+            this.buyerRows = origRows.filter(r => r.buyer_key === bk);
+            const bHtml = await this.buildExportHtml();
+            this.buyerRows = origRows;
+            const toAddr = buyerRow?.buyer_email || this.exportForm.to || '';
+            const subj = `[${this.pname}]物料概览 - ${buyerRow?.buyer_display || bk}`;
+            await api('POST', this.purl('/dashboard/export_custom_draft'), {
+              html_body: bHtml, to: toAddr, cc: this.exportForm.cc, subject: subj,
+            });
+            await new Promise(r => setTimeout(r, 120));
+          }
+          toast(`已为 ${keys.length} 位采购员各生成一封草稿`, 'success');
+          this.showExportDraft = false;
+        }
+      } catch (e) { toast(e.message, 'error'); }
+      finally { this.exportLoading = false; }
     },
   }));// ── Chat ─────────────────────────────────────────────────────────
   Alpine.data('chat', (projectId) => ({

@@ -433,6 +433,29 @@ def export_lead_buyer_draft(
     }
 
 
+class CustomExportDraftRequest(BaseModel):
+    html_body: str
+    to: str = ""
+    cc: str = ""
+    subject: str = ""
+
+
+@router.post("/export_custom_draft")
+def export_custom_draft(
+    body: CustomExportDraftRequest,
+    project_id: str = FPath(...),
+):
+    """接收前端组装好的 HTML 正文，直接创建 Outlook 草稿。"""
+    subject = body.subject.strip() or "物料概览"
+    draft = create_display_draft(
+        to_address=body.to,
+        cc=body.cc,
+        subject=subject,
+        html_body=body.html_body,
+    )
+    return {"ok": True, "draft": draft}
+
+
 class TimeNodeCreate(BaseModel):
     label: str
     node_date: date

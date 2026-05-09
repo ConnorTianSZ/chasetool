@@ -1,7 +1,7 @@
 <html>
 <body style="font-family: Arial, sans-serif; font-size: 10pt; color: #333;">
 <p>Dear {buyer_name},</p>
-<p><strong>{project_no}</strong> 以下物料尚未 OC（Order Confirmation），烦请尽快确认交期并录入系统。</p>
+<p><strong>{project_no}</strong> 以下物料尚未 OC，烦请尽快确认预计交期并录入SAP。</p>
 <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse; width:100%; font-size:9pt;">
 <tr style="background-color:#f2f2f2;">
 <th>PO Number</th><th>Item No</th><th>WBS Element</th><th>Part No</th><th>Description</th><th>Qty</th><th>Unit</th><th>Supplier</th><th>Original ETA</th>
