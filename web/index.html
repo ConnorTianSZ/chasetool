@@ -109,7 +109,7 @@
         <span class="icon">💬</span><span>Chat</span>
       </a>
       <a class="nav-item" :class="{active: $store.nav.page==='imports'}" @click="$store.nav.setPage('imports')">
-        <span class="icon">📥</span><span>导入 Excel</span>
+        <span class="icon">📥</span><span>导入导出 Excel</span>
       </a>
       <a class="nav-item" :class="{active: $store.nav.page==='settings'}" @click="$store.nav.setPage('settings')">
         <span class="icon">⚙️</span><span>设置</span>
@@ -212,6 +212,7 @@
           </template>
           <button class="btn btn-primary btn-sm" @click="openChaseModal()" :disabled="selected.size===0">✉️ 一键催货</button>
           <button class="btn btn-outline btn-sm" @click="load()">🔄 刷新</button>
+          <button class="btn btn-outline btn-sm" @click="exportDb()" title="导出当前项目完整数据库为 Excel">📤 导出完整数据</button>
           <div class="toolbar-options">
             <span>催货显示</span>
             <label class="check-label"><input type="checkbox" x-model="chaseView.count" /> 次数</label>
@@ -468,6 +469,7 @@
             <option value="">全部</option>
             <option value="new">未解析</option>
             <option value="pending_confirm">待确认</option>
+            <option value="partial">部分入库</option>
             <option value="applied">已入库</option>
             <option value="ignored">已忽略</option>
             <option value="manual">手动处理</option>
@@ -541,11 +543,12 @@
                   :class="{
                     'badge-open':      item.status==='new',
                     'badge-on_hold':   item.status==='pending_confirm',
+                    'badge-eta-mismatch': item.status==='partial',
                     'badge-delivered': item.status==='applied',
                     'badge-overdue-keydate': item.status==='rejected',
                     'badge-cancelled': item.status==='ignored'||item.status==='manual'||item.status==='escalate'
                   }"
-                  x-text="{new:'未解析',pending_confirm:'待确认',applied:'已入库',ignored:'已忽略',manual:'手动处理',rejected:'已回复不接受'}[item.status]||item.status"></span>
+                  x-text="{new:'未解析',pending_confirm:'待确认',partial:'部分入库',applied:'已入库',ignored:'已忽略',manual:'手动处理',rejected:'已回复不接受'}[item.status]||item.status"></span>
               </div>
 
               <div class="inbox-card-body">
@@ -578,31 +581,49 @@
                           </thead>
                           <tbody>
                             <template x-for="(ei, idx) in (item.llm_extracted_json.items||[])" :key="idx">
-                              <tr :class="item._itemSelections?.[idx]?.selected===false ? 'row-deselected' : ''">
+                              <tr :class="ei._applied ? 'row-applied' : (item._itemSelections?.[idx]?.selected===false ? 'row-deselected' : '')">
                                 <td style="text-align:center;">
-                                  <input type="checkbox"
-                                    :checked="item._itemSelections?.[idx]?.selected !== false"
-                                    @change="if(item._itemSelections?.[idx]) item._itemSelections[idx].selected = $event.target.checked" />
+                                  <template x-if="ei._applied">
+                                    <span title="已入库" style="color:#16a34a;font-weight:600;">✓</span>
+                                  </template>
+                                  <template x-if="!ei._applied">
+                                    <input type="checkbox"
+                                      :checked="item._itemSelections?.[idx]?.selected !== false"
+                                      @change="if(item._itemSelections?.[idx]) item._itemSelections[idx].selected = $event.target.checked" />
+                                  </template>
                                 </td>
                                 <td x-text="ei.po_number||'—'"></td>
                                 <td x-text="ei.item_no||'—'"></td>
                                 <td>
-                                  <input type="date" class="inline-input"
-                                    :value="item._itemSelections?.[idx]?.new_eta"
-                                    @input="if(item._itemSelections?.[idx]) item._itemSelections[idx].new_eta = $event.target.value"
-                                    style="width:110px;" />
+                                  <template x-if="ei._applied">
+                                    <span x-text="ei.new_eta||'—'" style="color:#6b7280;font-size:12px;"></span>
+                                  </template>
+                                  <template x-if="!ei._applied">
+                                    <input type="date" class="inline-input"
+                                      :value="item._itemSelections?.[idx]?.new_eta"
+                                      @input="if(item._itemSelections?.[idx]) item._itemSelections[idx].new_eta = $event.target.value"
+                                      style="width:110px;" />
+                                  </template>
                                 </td>
                                 <td>
-                                  <input type="text" class="inline-input"
-                                    :value="item._itemSelections?.[idx]?.remarks"
-                                    @input="if(item._itemSelections?.[idx]) item._itemSelections[idx].remarks = $event.target.value"
-                                    style="width:100%;min-width:120px;" />
+                                  <template x-if="ei._applied">
+                                    <span x-text="ei.remarks||'—'" style="color:#6b7280;font-size:12px;"></span>
+                                  </template>
+                                  <template x-if="!ei._applied">
+                                    <input type="text" class="inline-input"
+                                      :value="item._itemSelections?.[idx]?.remarks"
+                                      @input="if(item._itemSelections?.[idx]) item._itemSelections[idx].remarks = $event.target.value"
+                                      style="width:100%;min-width:120px;" />
+                                  </template>
                                 </td>
                                 <td x-text="ei.matched?.part_no||'—'"></td>
                                 <td x-text="ei.matched?.supplier||'—'"></td>
                                 <td x-text="ei.matched?.current_eta||'—'"></td>
                                 <td>
-                                  <template x-if="ei.matched">
+                                  <template x-if="ei._applied">
+                                    <span class="badge badge-sm badge-delivered">已入库</span>
+                                  </template>
+                                  <template x-if="!ei._applied && ei.matched">
                                     <span class="badge badge-sm"
                                       :class="{
                                         'badge-no-eta':           ei.matched.state_code==='no_oc',
@@ -614,7 +635,7 @@
                                       }"
                                       x-text="ei.matched.state_label"></span>
                                   </template>
-                                  <template x-if="!ei.matched">
+                                  <template x-if="!ei._applied && !ei.matched">
                                     <span class="badge badge-sm badge-cancelled">未匹配</span>
                                   </template>
                                 </td>
@@ -635,13 +656,15 @@
                 <button class="btn btn-outline btn-sm" @click="parse(item)"
                   x-show="item.status==='new' || item.status==='pending_confirm'">🤖 解析</button>
                 <button class="btn btn-success btn-sm" @click="decide(item,'apply')"
-                  x-show="item.status==='pending_confirm'">✅ 入库选中行</button>
+                  x-show="item.status==='pending_confirm' || item.status==='partial'">✅ 入库选中行</button>
                 <button class="btn btn-outline btn-sm" @click="decide(item,'ignore')"
                   x-show="item.status==='pending_confirm'">🚫 忽略</button>
                 <button class="btn btn-danger btn-sm" @click="decide(item,'manual')"
                   x-show="item.status==='pending_confirm'">📋 转手动</button>
                 <button class="btn btn-sm" style="background:#fef3c7;color:#b45309;border:1px solid #fcd34d;" @click="openReject(item)"
-                  x-show="item.status==='pending_confirm'">❌ 不接受</button>
+                  x-show="item.status==='pending_confirm' || item.status==='partial'">❌ 不接受</button>
+                <button class="btn btn-sm" style="background:#d1fae5;color:#065f46;border:1px solid #6ee7b7;" @click="finalizeEmail(item)"
+                  x-show="item.status==='partial'">🏁 完成此邮件</button>
               </div>
             </div>
           </template>
@@ -1019,10 +1042,10 @@
     </template>
 
 
-    <!-- ════════ 导入 Excel ════════ -->
+    <!-- ════════ 导入导出 Excel ════════ -->
     <template x-if="$store.nav.page === 'imports' && activeProject">
       <div x-data="imports(activeProject.id)" style="display:flex;flex-direction:column;flex:1;min-height:0;">
-        <div class="topbar"><span class="topbar-title">导入 Excel</span></div>
+        <div class="topbar"><span class="topbar-title">导入导出 Excel</span></div>
         <div class="content">
           <div class="card" style="margin-bottom:16px;">
             <div class="card-header"><h3>上传文件</h3></div>
@@ -1039,6 +1062,19 @@
                 <div style="font-size:12px;color:#888;margin-top:4px;">支持 .xlsx / .xls（大小写均可）</div>
               </div>
               <input type="file" x-ref="fileInput" accept=".xlsx,.xls,.XLSX,.XLS" style="display:none;" @change="onFileInput($event)" />
+
+              <!-- 导出操作区 -->
+              <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;align-items:center;">
+                <button class="btn btn-outline btn-sm" @click="exportDb()" title="将数据库中全部物料导出为 Excel，重点物料行高亮">
+                  📤 导出完整数据
+                </button>
+                <button class="btn btn-outline btn-sm" @click="exportChase()" :disabled="exportChaseLoading || !lastImportPath"
+                  :title="lastImportPath ? '在最近导入的文件末尾追加催货信息，另存为 -chase.xlsx' : '请先导入一个 Excel 文件'">
+                  <span x-show="!exportChaseLoading">🔗 追加催货列并导出</span>
+                  <span x-show="exportChaseLoading">处理中…</span>
+                </button>
+                <span x-show="lastImportPath" style="font-size:11px;color:#888;" x-text="'源文件：' + (lastImportPath || '').split(/[/\\\\]/).pop()"></span>
+              </div>
 
               <div x-show="loading" style="margin-top:12px;text-align:center;color:#888;">导入中…</div>
 

@@ -190,19 +190,28 @@ def apply_inbound_decision(
     decision:   str,
     edits:      dict | None = None,
     project_id: str = "default",
+    finalize:   bool = False,
 ) -> dict:
     """
     Apply human decision to a parsed inbound email.
 
     decision:
-      "apply"  - match each extracted item to a material and update ETA/remarks
+      "apply"  - match selected items to materials and update ETA/remarks.
+                 Sets status to "partial" if unprocessed items remain,
+                 or "applied" if all items are now done (or finalize=True).
       "ignore" - mark as ignored
       "manual" - mark for manual handling
 
-    edits (optional): override extracted content; supports {"items": [...]} to
-      replace the items list with human-corrected/selected values.
+    finalize (bool):
+      True  → force status to "applied" regardless of remaining items.
+               Used when operator clicks "完成此邮件".
+      False → (default) status becomes "partial" if items still remain open.
 
-    Returns: {ok, email_id, decision, applied: [...], unmatched: [...]}
+    edits (optional): {"items": [...]} — only the selected rows this round,
+      with user-edited new_eta / remarks. Unselected rows are skipped but
+      preserved in llm_extracted_json for future processing.
+
+    Returns: {ok, email_id, decision, status, applied, unmatched, full_extracted}
     """
     conn = get_connection(project_id)
     try:
@@ -212,36 +221,86 @@ def apply_inbound_decision(
 
         if decision == "apply":
             extracted = json.loads(row["llm_extracted_json"] or "{}")
-            if edits:
-                if "items" in edits:
-                    extracted["items"] = edits["items"]
-                else:
-                    extracted.update(edits)
+            full_items = list(extracted.get("items") or [])
 
-            items = extracted.get("items") or []
-            if not items:
-                return {"ok": False, "reason": "No items in llm_extracted_json; parse the email first"}
+            # ── finalize only: just close the email, no new items to process ──
+            if finalize and not edits:
+                conn.execute(
+                    "UPDATE inbound_emails SET status='applied', operator_decision='apply' WHERE id=?",
+                    (email_id,),
+                )
+                conn.commit()
+                return {"ok": True, "email_id": email_id, "decision": "finalize",
+                        "status": "applied", "applied": [], "unmatched": []}
+
+            # ── build lookup: which items are selected this round ──
+            if edits and "items" in edits:
+                selected_list = edits["items"]
+            else:
+                # No edits → apply all not-yet-applied items
+                selected_list = [it for it in full_items if not it.get("_applied")]
+
+            # key: (po_number_upper, item_no_upper) → selected item data
+            to_apply_map: dict[tuple, dict] = {}
+            for it in selected_list:
+                key = (
+                    str(it.get("po_number") or "").strip().upper(),
+                    str(it.get("item_no")   or "").strip().upper(),
+                )
+                to_apply_map[key] = it
+
+            if not to_apply_map:
+                return {"ok": False, "reason": "No items selected; please check at least one row"}
 
             now_iso    = datetime.utcnow().isoformat(timespec="seconds")
             source_ref = row["outlook_entry_id"]
             applied, unmatched = [], []
 
-            for item in items:
-                result = _apply_single_item(conn, item, source_ref, now_iso)
+            for i, full_item in enumerate(full_items):
+                if full_item.get("_applied"):
+                    continue  # Already done in a previous round
+
+                key = (
+                    str(full_item.get("po_number") or "").strip().upper(),
+                    str(full_item.get("item_no")   or "").strip().upper(),
+                )
+                if key not in to_apply_map:
+                    continue  # Not selected this round — leave for later
+
+                # Merge user-edited fields (new_eta, remarks) from the selected version
+                sel = to_apply_map[key]
+                item_to_process = {
+                    **full_item,
+                    **{k: v for k, v in sel.items() if k in ("new_eta", "remarks", "matched")},
+                }
+
+                result = _apply_single_item(conn, item_to_process, source_ref, now_iso)
                 if result["status"] == "applied":
+                    full_items[i] = {**full_items[i], "_applied": True}
                     applied.append(result)
                 else:
                     unmatched.append(result)
 
-            new_status = "applied" if applied else "manual"
+            # Write back full items list with _applied markers
+            extracted["items"] = full_items
+
+            # Determine new email status
+            has_remaining = any(not it.get("_applied") for it in full_items)
+            if finalize or not has_remaining:
+                new_status = "applied"
+            else:
+                new_status = "partial"
+
             conn.execute(
-                "UPDATE inbound_emails SET status=?, operator_decision=? WHERE id=?",
-                (new_status, decision, email_id),
+                "UPDATE inbound_emails SET llm_extracted_json=?, status=?, operator_decision='apply' WHERE id=?",
+                (json.dumps(extracted, ensure_ascii=False), new_status, email_id),
             )
             conn.commit()
             return {
                 "ok": True, "email_id": email_id, "decision": decision,
+                "status": new_status,
                 "applied": applied, "unmatched": unmatched,
+                "full_extracted": extracted,
             }
 
         elif decision == "ignore":

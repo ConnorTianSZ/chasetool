@@ -2,9 +2,11 @@
 from __future__ import annotations
 from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, HTTPException, Query, Path as FPath
+from fastapi.responses import Response
 import shutil, tempfile, os
+from datetime import datetime
 
-from app.services.excel_io import import_excel, export_back, _is_excel
+from app.services.excel_io import import_excel, export_back, export_full_db, export_chase_append, _is_excel
 from app.db.connection import get_connection
 
 router = APIRouter(prefix="/api/projects/{project_id}/imports", tags=["imports"])
@@ -65,4 +67,39 @@ def export_back_api(
         raise HTTPException(404, f"File not found: {source_path}")
     dest = p if overwrite else None
     out_path = export_back(p, dest, project_id=project_id)
+    return {"ok": True, "output_path": str(out_path)}
+
+
+@router.get("/export_db")
+def export_db_api(project_id: str = FPath(...)):
+    """将当前项目完整物料数据库导出为 Excel 文件（浏览器直接下载）。"""
+    try:
+        xlsx_bytes = export_full_db(project_id=project_id)
+    except Exception as e:
+        raise HTTPException(500, f"导出失败：{e}")
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"materials_{project_id}_{timestamp}.xlsx"
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/export_chase")
+def export_chase_api(
+    project_id: str = FPath(...),
+    source_path: str = Query(...),
+):
+    """在原始 Excel 末尾追加催货信息列，输出为同目录 <原名>-chase.xlsx。"""
+    p = Path(source_path)
+    if not p.exists():
+        raise HTTPException(404, f"源文件不存在：{source_path}")
+    try:
+        out_path = export_chase_append(p, project_id=project_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"导出失败：{e}")
     return {"ok": True, "output_path": str(out_path)}

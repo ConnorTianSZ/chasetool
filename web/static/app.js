@@ -310,6 +310,24 @@ document.addEventListener('alpine:init', () => {
 
     prevPage() { if (this.page > 1) { this.page--; this.load(); } },
     nextPage() { if (this.page < this.totalPages) { this.page++; this.load(); } },
+
+    // 导出完整数据库（浏览器直接下载）
+    async exportDb() {
+      try {
+        const resp = await fetch(this.purl('/imports/export_db'));
+        if (!resp.ok) { const j = await resp.json(); throw new Error(j.detail || '导出失败'); }
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const cd = resp.headers.get('Content-Disposition') || '';
+        const m = cd.match(/filename="(.+?)"/);
+        a.download = m ? m[1] : `materials_${this.pid}.xlsx`;
+        a.href = url;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast('导出成功，文件已下载', 'success');
+      } catch (e) { toast(e.message || '导出失败', 'error'); }
+    },
   }));
 
   // ── 收件审批 ─────────────────────────────────────────────────────
@@ -758,11 +776,17 @@ document.addEventListener('alpine:init', () => {
     onKeydown(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.send(); } },
   }));
 
-  // ── 导入 Excel ───────────────────────────────────────────────────
+  // ── 导入导出 Excel ───────────────────────────────────────────────
   Alpine.data('imports', (projectId) => ({
     pid: projectId,
     dragging: false, result: null, loading: false, history: [],
+    exportChaseLoading: false,
     purl(p) { return `/api/projects/${this.pid}${p}`; },
+
+    // 最近一次导入的文件路径（从历史记录中取）
+    get lastImportPath() {
+      return this.history.length > 0 ? (this.history[0].file_path || '') : '';
+    },
 
     async init() { await this.loadHistory(); },
 
@@ -788,6 +812,36 @@ document.addEventListener('alpine:init', () => {
 
     onDrop(e)      { this.dragging = false; this.handleFile(e.dataTransfer.files[0]); },
     onFileInput(e) { this.handleFile(e.target.files[0]); },
+
+    // 导出完整数据库（浏览器直接下载）
+    async exportDb() {
+      try {
+        const resp = await fetch(this.purl('/imports/export_db'));
+        if (!resp.ok) { const j = await resp.json(); throw new Error(j.detail || '导出失败'); }
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const cd = resp.headers.get('Content-Disposition') || '';
+        const m = cd.match(/filename="(.+?)"/);
+        a.download = m ? m[1] : `materials_${this.pid}.xlsx`;
+        a.href = url;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast('导出成功，文件已下载', 'success');
+      } catch (e) { toast(e.message || '导出失败', 'error'); }
+    },
+
+    // 追加催货列到原始文件并另存为 -chase.xlsx
+    async exportChase() {
+      if (!this.lastImportPath) { toast('未找到最近导入的文件路径', 'error'); return; }
+      this.exportChaseLoading = true;
+      try {
+        const r = await api('POST', this.purl('/imports/export_chase') + '?source_path=' + encodeURIComponent(this.lastImportPath));
+        const outName = (r.output_path || '').split(/[/\\]/).pop();
+        toast(`已生成：${outName}（与源文件同目录）`, 'success');
+      } catch (e) { toast(e.message || '导出失败', 'error'); }
+      finally { this.exportChaseLoading = false; }
+    },
   }));
 
   // ── 设置 ─────────────────────────────────────────────────────────

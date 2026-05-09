@@ -199,11 +199,15 @@ def parse_email(email_id: int, project_id: str = FPath(...)):
 class DecisionBody(BaseModel):
     decision: str
     edits: dict | None = None
+    finalize: bool = False
 
 
 @router.post("/{email_id}/decide")
 def decide(email_id: int, body: DecisionBody, project_id: str = FPath(...)):
-    return apply_inbound_decision(email_id, body.decision, body.edits, project_id=project_id)
+    return apply_inbound_decision(
+        email_id, body.decision, body.edits,
+        project_id=project_id, finalize=body.finalize,
+    )
 
 
 # ── 不接受：发加急回复邮件 ──────────────────────────────────────────
