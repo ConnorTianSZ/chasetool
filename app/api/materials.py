@@ -135,6 +135,14 @@ def _add_material_state_filter(
                 f"AND date(current_eta) >= date(?) AND date(current_eta) > date(?))"
             )
             params.extend([today, key_date])
+        elif material_state == "eta_mismatch":
+            sub_conditions.append(
+                f"({_not_delivered_sql()} AND current_eta IS NOT NULL AND current_eta <> '' "
+                f"AND urgent_feedback_eta IS NOT NULL AND urgent_feedback_eta <> '' "
+                f"AND (date(current_eta) < date(?) OR date(current_eta) > date(?)) "
+                f"AND date(urgent_feedback_eta) >= date(?) AND date(urgent_feedback_eta) <= date(?))"
+            )
+            params.extend([today, key_date, today, key_date])
         elif material_state == "normal":
             # 正常：OC 在今日之后且不晚于 KEYDATE
             sub_conditions.append(
@@ -160,6 +168,7 @@ def list_materials(
     is_focus:    Optional[bool] = Query(None),
     overdue:     bool           = Query(False),
     no_eta:      bool           = Query(False),
+    chase_state: Optional[str]  = Query(None),
     search:      Optional[str]  = Query(None),
     key_date:    Optional[str]  = Query(None),
     page:        int            = Query(1, ge=1),
@@ -209,6 +218,9 @@ def list_materials(
         if no_eta:
             conditions.append(_not_delivered_sql())
             conditions.append("(current_eta IS NULL OR current_eta = '')")
+        if chase_state == "chased_no_feedback":
+            conditions.append("COALESCE(chase_count, 0) > 0")
+            conditions.append("supplier_feedback_time IS NULL")
         if search:
             conditions.append(
                 "(po_number LIKE ? OR part_no LIKE ? OR description LIKE ? OR supplier LIKE ?)"

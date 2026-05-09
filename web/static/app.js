@@ -90,6 +90,11 @@ document.addEventListener('alpine:init', () => {
   Alpine.store('nav', {
     page: 'materials',
     setPage(p) { this.page = p; },
+    materialPreset: null,
+    openMaterials(filters = {}) {
+      this.materialPreset = filters;
+      this.page = 'materials';
+    },
   });
 
   // subapp data 仅用于包裹，读取 store
@@ -114,7 +119,7 @@ document.addEventListener('alpine:init', () => {
     keyDate: '',
     chaseView: { count: true, chaseDate: true, feedbackDate: true },
 
-    filters: { search:'', po_number:'', material_state:[], supplier:'', station_no:[], purchasing_group:[], buyer_key:[], is_focus:'', overdue:false, no_eta:false },
+    filters: { search:'', po_number:'', material_state:[], supplier:'', station_no:[], purchasing_group:[], buyer_key:[], is_focus:'', overdue:false, no_eta:false, chase_state:'' },
 
     showDetail: false, detailItem: null, detailHistory: [],
     showChaseModal: false, chaseDrafts: [], chaseSkipped: [], chaseMode: 'draft', chaseLoading: false,
@@ -122,6 +127,12 @@ document.addEventListener('alpine:init', () => {
     async init() {
       await this.loadFilterOptions();
       await this.loadKeyDate();
+      const preset = Alpine.store('nav').materialPreset;
+      if (preset) {
+        this.filters = { ...this.filters, ...preset };
+        if (preset.key_date) this.keyDate = preset.key_date;
+        Alpine.store('nav').materialPreset = null;
+      }
       await this.load();
     },
 
@@ -189,7 +200,7 @@ document.addEventListener('alpine:init', () => {
     },
 
     applyFilter() { this.page = 1; this.selected = new Set(); this.load(); },
-    resetFilter()  { this.filters = { search:'', po_number:'', material_state:[], supplier:'', station_no:[], purchasing_group:[], buyer_key:[], is_focus:'', overdue:false, no_eta:false }; this.applyFilter(); },
+    resetFilter()  { this.filters = { search:'', po_number:'', material_state:[], supplier:'', station_no:[], purchasing_group:[], buyer_key:[], is_focus:'', overdue:false, no_eta:false, chase_state:'' }; this.applyFilter(); },
 
     toggleSelect(id) {
       this.selected.has(id) ? this.selected.delete(id) : this.selected.add(id);
@@ -545,6 +556,28 @@ document.addEventListener('alpine:init', () => {
 	    pid: projectId,
 	    overview: {}, byStatus: [], overdueSuppliers: [], chaseStats: [],
 	    loading: false, _charts: {},
+	    leadKeyDate: '',
+	    evidenceBy: 'supplier',
+	    summaryCards: [],
+	    buyerRows: [],
+	    topSuppliers: [],
+	    topManufacturers: [],
+	    lateEvidence: [],
+	    selectedBuyers: new Set(),
+	    showExportDraft: false,
+	    exportLoading: false,
+	    exportForm: {
+	      to: '',
+	      cc: '',
+	      subject: '',
+	      includeStates: {
+	        no_oc: true,
+	        overdue_now: true,
+	        overdue_keydate: true,
+	        chased_no_feedback: true,
+	        eta_mismatch: true,
+	      },
+	    },
 
 	    // 时间节点
 	    timeNodes: [],
@@ -563,6 +596,7 @@ document.addEventListener('alpine:init', () => {
 	    async init() {
 	      this.loading = true;
 	      try {
+	        await this.loadLeadBuyer();
 	        [this.overview, this.byStatus, this.overdueSuppliers, this.chaseStats] = await Promise.all([
 	          api('GET', this.purl('/dashboard/overview')),
 	          api('GET', this.purl('/dashboard/aggregates?group_by=status')),
@@ -575,6 +609,101 @@ document.addEventListener('alpine:init', () => {
 	      await this.loadTimeNodes();
 	    },
 
+	    get selectedBuyerKeys() { return [...this.selectedBuyers]; },
+
+	    selectedStateIds() {
+	      return Object.entries(this.exportForm.includeStates)
+	        .filter(([, enabled]) => enabled)
+	        .map(([id]) => id);
+	    },
+
+	    async loadLeadBuyer() {
+	      const p = new URLSearchParams({ evidence_by: this.evidenceBy });
+	      if (this.leadKeyDate) p.set('key_date', this.leadKeyDate);
+	      const data = await api('GET', this.purl('/dashboard/lead_buyer?') + p);
+	      this.leadKeyDate = data.key_date || this.leadKeyDate;
+	      this.summaryCards = data.summary_cards || [];
+	      this.buyerRows = data.buyer_rows || [];
+	      this.topSuppliers = data.top_suppliers || [];
+	      this.topManufacturers = data.top_manufacturers || [];
+	      this.lateEvidence = data.late_evidence || [];
+	      const validKeys = new Set(this.buyerRows.map(r => r.buyer_key));
+	      this.selectedBuyers = new Set([...this.selectedBuyers].filter(k => validKeys.has(k)));
+	    },
+
+	    async setEvidenceBy(value) {
+	      this.evidenceBy = value;
+	      try { await this.loadLeadBuyer(); }
+	      catch (e) { toast(e.message, 'error'); }
+	    },
+
+	    toggleBuyer(key) {
+	      this.selectedBuyers.has(key) ? this.selectedBuyers.delete(key) : this.selectedBuyers.add(key);
+	      this.selectedBuyers = new Set(this.selectedBuyers);
+	    },
+
+	    toggleAllBuyers() {
+	      this.selectedBuyers = this.selectedBuyers.size === this.buyerRows.length
+	        ? new Set()
+	        : new Set(this.buyerRows.map(r => r.buyer_key));
+	    },
+
+	    evidenceText(items) {
+	      return (items || []).length ? items.map(i => `${i.name}:${i.count}`).join(', ') : '—';
+	    },
+
+	    cardClass(card) {
+	      return {
+	        danger: card.tone === 'danger',
+	        warning: card.tone === 'warning',
+	        primary: card.tone === 'primary',
+	        success: card.tone === 'success',
+	      };
+	    },
+
+	    openMaterials(row, stateId = '') {
+	      const filters = { buyer_key: [row.buyer_key] };
+	      if (stateId === 'chased_no_feedback') {
+	        filters.chase_state = 'chased_no_feedback';
+	      } else if (stateId) {
+	        filters.material_state = [stateId];
+	      }
+	      if (this.leadKeyDate) filters.key_date = this.leadKeyDate;
+	      Alpine.store('nav').openMaterials(filters);
+	    },
+
+	    openExportDraft() {
+	      if (!this.selectedBuyers.size) {
+	        toast('请先勾选采购员', 'info');
+	        return;
+	      }
+	      this.exportForm.subject = this.exportForm.subject || `Dashboard follow up - ${this.leadKeyDate || ''}`;
+	      this.showExportDraft = true;
+	    },
+
+	    async exportDashboardDraft() {
+	      const includeStates = this.selectedStateIds();
+	      if (!includeStates.length) {
+	        toast('请至少选择一种状态', 'info');
+	        return;
+	      }
+	      this.exportLoading = true;
+	      try {
+	        const result = await api('POST', this.purl('/dashboard/lead_buyer/export_draft'), {
+	          buyer_keys: this.selectedBuyerKeys,
+	          include_states: includeStates,
+	          evidence_by: this.evidenceBy,
+	          key_date: this.leadKeyDate,
+	          to: this.exportForm.to,
+	          cc: this.exportForm.cc,
+	          subject: this.exportForm.subject,
+	        });
+	        toast(`草稿已打开到 Outlook（${result.material_count || 0} 条物料）`, 'success');
+	        this.showExportDraft = false;
+	      } catch (e) { toast(e.message, 'error'); }
+	      finally { this.exportLoading = false; }
+	    },
+
 	    renderCharts() {
 	      const statusCtx = document.getElementById('chart-status');
 	      if (statusCtx && this.byStatus.length) {
@@ -582,9 +711,9 @@ document.addEventListener('alpine:init', () => {
 	        this._charts.status = new Chart(statusCtx, {
 	          type: 'doughnut',
 	          data: {
-	            labels: this.byStatus.map(s => s.status || '未知'),
+	            labels: this.byStatus.map(s => s.g || '未知'),
 	            datasets: [{
-	              data: this.byStatus.map(s => s.count || 0),
+	              data: this.byStatus.map(s => s.cnt || 0),
 	              backgroundColor: ['#2563eb', '#16a34a', '#6b7280', '#d97706', '#dc2626'],
 	            }],
 	          },
@@ -601,7 +730,7 @@ document.addEventListener('alpine:init', () => {
 	            labels: top10.map(s => s.supplier || '未知'),
 	            datasets: [{
 	              label: '逾期数量',
-	              data: top10.map(s => s.count || 0),
+	              data: top10.map(s => s.overdue_count || 0),
 	              backgroundColor: '#dc2626',
 	            }],
 	          },

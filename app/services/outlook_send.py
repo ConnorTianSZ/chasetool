@@ -89,6 +89,26 @@ def send_chase_email(
     return {"ok": True, "method": method, "chase_log_id": log_id, "marker_tag": marker_tag}
 
 
+def create_display_draft(
+    to_address: str,
+    cc: str,
+    subject: str,
+    html_body: str,
+) -> dict:
+    """Create an Outlook draft and open it for the user without chase logging."""
+    outlook = _get_outlook()
+    mail = outlook.CreateItem(0)
+    mail.To = to_address or ""
+    if cc:
+        mail.CC = cc
+    mail.Subject = subject or ""
+    mail.HTMLBody = html_body or ""
+    mail.Save()
+    entry_id = mail.EntryID
+    mail.Display()
+    return {"ok": True, "method": "draft", "entry_id": entry_id}
+
+
 def build_chase_subject(marker, chase_type: str = "") -> str:
     tag = marker.to_subject_tag()
     if isinstance(marker, ChaseMarker):

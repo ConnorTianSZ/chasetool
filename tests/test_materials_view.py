@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 
 from app.api import materials as materials_api
@@ -39,7 +40,7 @@ class MaterialViewHelpersTest(unittest.TestCase):
         """OC 日期 >= KEYDATE → 正常"""
         from datetime import date, timedelta
         future_key  = (date.today() + timedelta(days=30)).isoformat()
-        future_eta  = (date.today() + timedelta(days=45)).isoformat()
+        future_eta  = (date.today() + timedelta(days=15)).isoformat()
         self.assertEqual(
             derive_material_state({"open_quantity_gr": 5, "current_eta": future_eta}, future_key)["code"],
             "normal",
@@ -89,19 +90,20 @@ class MaterialViewHelpersTest(unittest.TestCase):
             "buyer_email": "",
             "open_quantity_gr": "1",
             "order_date": "2026-05-01 00:00:00",
-            "current_eta": "2026-05-08 00:00:00",
+            "current_eta": (date.today() + timedelta(days=5)).isoformat() + " 00:00:00",
             "chase_count": 0,
         }
+        key_date = (date.today() + timedelta(days=10)).isoformat()
         enriched = enrich_material_row(
             row,
-            key_date="2026-05-07",
+            key_date=key_date,
             pgr_map={"MFW": {"name": "Tian Connor", "email": "Connor.TIAN@cn.bosch.com"}},
         )
         self.assertEqual(enriched["buyer_name"], "Tian Connor")
         self.assertEqual(enriched["buyer_email"], "Connor.TIAN@cn.bosch.com")
         self.assertEqual(enriched["material_state"], "normal")
         self.assertEqual(enriched["display_order_date"], "2026/05/01")
-        self.assertEqual(enriched["display_current_eta"], "2026/05/08")
+        self.assertEqual(enriched["display_current_eta"], (date.today() + timedelta(days=5)).isoformat().replace("-", "/"))
 
 
 class MaterialsApiTest(unittest.TestCase):
@@ -158,9 +160,13 @@ class MaterialsApiTest(unittest.TestCase):
         self.conn.commit()
 
     def test_list_materials_sorts_delivered_last_and_returns_derived_state(self):
-        self._insert_material(po_number="PO-DONE", item_no="10", current_eta="2026-04-01", open_quantity_gr=0)
-        self._insert_material(po_number="PO-LATE", item_no="10", current_eta="2026-05-06", open_quantity_gr=5)
-        self._insert_material(po_number="PO-NORMAL", item_no="10", current_eta="2026-05-08", open_quantity_gr=5)
+        from datetime import date, timedelta
+        past_eta = (date.today() - timedelta(days=1)).isoformat()
+        normal_eta = (date.today() + timedelta(days=5)).isoformat()
+        key_date = (date.today() + timedelta(days=10)).isoformat()
+        self._insert_material(po_number="PO-DONE", item_no="10", current_eta=past_eta, open_quantity_gr=0)
+        self._insert_material(po_number="PO-LATE", item_no="10", current_eta=past_eta, open_quantity_gr=5)
+        self._insert_material(po_number="PO-NORMAL", item_no="10", current_eta=normal_eta, open_quantity_gr=5)
 
         result = materials_api.list_materials(
             project_id=self.project_id,
@@ -176,7 +182,7 @@ class MaterialsApiTest(unittest.TestCase):
             overdue=False,
             no_eta=False,
             search=None,
-            key_date="2026-05-07",
+            key_date=key_date,
             page=1,
             page_size=50,
         )
