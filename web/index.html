@@ -777,17 +777,148 @@
           <button class="btn btn-outline btn-sm" @click="init()">🔄 刷新</button>
         </div>
         <div class="content">
-          <div class="stat-grid" style="margin-bottom:20px;">
-            <div class="stat-card primary"><div class="num" x-text="overview.total||0"></div><div class="label">物料总行数</div></div>
-            <div class="stat-card"><div class="num" x-text="overview.open_count||0"></div><div class="label">进行中</div></div>
-            <div class="stat-card danger"><div class="num" x-text="overview.overdue_count||0"></div><div class="label">已逾期</div></div>
-            <div class="stat-card warning"><div class="num" x-text="overview.no_eta_count||0"></div><div class="label">未确认交期</div></div>
-            <div class="stat-card warning"><div class="num" x-text="overview.focus_count||0"></div><div class="label">重点关注</div></div>
-            <div class="stat-card success"><div class="num" x-text="overview.delivered_count||0"></div><div class="label">已交货</div></div>
+          <div class="dashboard-actions">
+            <label class="key-date-control">
+              <span>KEY DATE</span>
+              <input type="date" x-model="leadKeyDate" @change="loadLeadBuyer()" />
+            </label>
+            <div class="segmented">
+              <button :class="{active:evidenceBy==='supplier'}" @click="setEvidenceBy('supplier')">按供应商展开</button>
+              <button :class="{active:evidenceBy==='manufacturer'}" @click="setEvidenceBy('manufacturer')">按制造商展开</button>
+            </div>
+            <button class="btn btn-primary btn-sm" @click="openExportDraft()" :disabled="selectedBuyers.size===0">导出到 Outlook 草稿</button>
+            <span class="selected-hint" x-show="selectedBuyers.size" x-text="'已选 ' + selectedBuyers.size + ' 个采购员'"></span>
           </div>
+
+          <div class="stat-grid" style="margin-bottom:16px;">
+            <template x-for="card in summaryCards" :key="card.id">
+              <div class="stat-card" :class="cardClass(card)">
+                <div class="num" x-text="card.value || 0"></div>
+                <div class="label" x-text="card.label"></div>
+              </div>
+            </template>
+          </div>
+
+          <div class="card" style="margin-bottom:16px;">
+            <div class="card-header">
+              <h3>采购员催办看板</h3>
+              <button class="btn btn-outline btn-sm" @click="loadLeadBuyer()">刷新</button>
+            </div>
+            <div class="table-wrap">
+              <table class="lead-dashboard-table">
+                <thead>
+                  <tr>
+                    <th><input type="checkbox" @change="toggleAllBuyers()" :checked="buyerRows.length && selectedBuyers.size===buyerRows.length" /></th>
+                    <th>采购员</th>
+                    <th>Open</th>
+                    <th>无OC</th>
+                    <th>应交未交</th>
+                    <th>晚于节点</th>
+                    <th>已催未回复</th>
+                    <th>Top 风险供应商</th>
+                    <th>Top 风险制造商</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="row in buyerRows" :key="row.buyer_key">
+                    <tr>
+                      <td><input type="checkbox" :checked="selectedBuyers.has(row.buyer_key)" @change="toggleBuyer(row.buyer_key)" /></td>
+                      <td>
+                        <div style="font-weight:600;" x-text="row.buyer_display"></div>
+                        <div style="font-size:11px;color:#6b7280;" x-text="row.buyer_email || ''"></div>
+                      </td>
+                      <td><button class="metric-link" @click="openMaterials(row)" x-text="row.open_count"></button></td>
+                      <td><button class="metric-link warn" @click="openMaterials(row, 'no_oc')" x-text="row.no_oc_count"></button></td>
+                      <td><button class="metric-link danger" @click="openMaterials(row, 'overdue_now')" x-text="row.overdue_now_count"></button></td>
+                      <td><button class="metric-link danger" @click="openMaterials(row, 'overdue_keydate')" x-text="row.overdue_keydate_count"></button></td>
+                      <td><button class="metric-link warn" @click="openMaterials(row, 'chased_no_feedback')" x-text="row.chased_no_feedback_count"></button></td>
+                      <td class="evidence-cell" x-text="evidenceText(row.top_suppliers)"></td>
+                      <td class="evidence-cell" x-text="evidenceText(row.top_manufacturers)"></td>
+                      <td><button class="btn btn-outline btn-sm" @click="openMaterials(row)">查看物料</button></td>
+                    </tr>
+                  </template>
+                  <template x-if="buyerRows.length===0">
+                    <tr><td colspan="10" class="empty">暂无 Dashboard 数据</td></tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="chart-grid" style="margin-bottom:16px;">
+            <div class="chart-box">
+              <h4 x-text="evidenceBy==='supplier' ? '晚于节点证据：供应商' : '晚于节点证据：制造商'"></h4>
+              <div class="evidence-list">
+                <template x-for="item in lateEvidence" :key="item.name">
+                  <div><span x-text="item.name"></span><strong x-text="item.count"></strong></div>
+                </template>
+                <div class="empty" x-show="lateEvidence.length===0" style="padding:16px;">暂无晚于节点物料</div>
+              </div>
+            </div>
+            <div class="chart-box">
+              <h4>Top 风险供应商 / 制造商</h4>
+              <div class="evidence-list split">
+                <div>
+                  <template x-for="item in topSuppliers" :key="'s'+item.name">
+                    <div><span x-text="item.name"></span><strong x-text="item.count"></strong></div>
+                  </template>
+                </div>
+                <div>
+                  <template x-for="item in topManufacturers" :key="'m'+item.name">
+                    <div><span x-text="item.name"></span><strong x-text="item.count"></strong></div>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-overlay" x-show="showExportDraft" @click.self="showExportDraft=false" style="display:none;">
+            <div class="modal" style="width:760px;" x-show="showExportDraft">
+              <div class="modal-header">
+                <h3>导出 Dashboard 到 Outlook 草稿</h3>
+                <button class="modal-close" @click="showExportDraft=false">×</button>
+              </div>
+              <div class="modal-body">
+                <div style="display:grid;gap:12px;">
+                  <div class="form-row">
+                    <label class="field-label" style="width:70px;">To</label>
+                    <input type="text" x-model="exportForm.to" placeholder="收件人邮箱，可为空" style="flex:1;" />
+                  </div>
+                  <div class="form-row">
+                    <label class="field-label" style="width:70px;">CC</label>
+                    <input type="text" x-model="exportForm.cc" placeholder="抄送，可为空" style="flex:1;" />
+                  </div>
+                  <div class="form-row">
+                    <label class="field-label" style="width:70px;">Subject</label>
+                    <input type="text" x-model="exportForm.subject" style="flex:1;" />
+                  </div>
+                  <div>
+                    <div class="field-label" style="margin-bottom:6px;">包含状态</div>
+                    <div class="form-row">
+                      <label class="check-label"><input type="checkbox" x-model="exportForm.includeStates.no_oc" /> 无OC</label>
+                      <label class="check-label"><input type="checkbox" x-model="exportForm.includeStates.overdue_now" /> 应交未交</label>
+                      <label class="check-label"><input type="checkbox" x-model="exportForm.includeStates.overdue_keydate" /> 晚于节点</label>
+                      <label class="check-label"><input type="checkbox" x-model="exportForm.includeStates.chased_no_feedback" /> 已催未回复</label>
+                      <label class="check-label"><input type="checkbox" x-model="exportForm.includeStates.eta_mismatch" /> 交期不一致</label>
+                    </div>
+                  </div>
+                  <div style="font-size:12px;color:#6b7280;">
+                    将生成一封汇总草稿，按采购员分组；不会发送邮件，也不会增加供应商催货次数。
+                  </div>
+                </div>
+              </div>
+              <div class="modal-footer">
+                <button class="btn btn-outline" @click="showExportDraft=false">取消</button>
+                <button class="btn btn-primary" @click="exportDashboardDraft()" :disabled="exportLoading">
+                  <span x-text="exportLoading ? '正在打开草稿…' : '生成并打开草稿'"></span>
+                </button>
+              </div>
+            </div>
+          </div>
+
           <div class="chart-grid">
-            <div class="chart-box"><h4>状态分布</h4><canvas id="chart-status" height="200"></canvas></div>
-            <div class="chart-box"><h4>逾期最多供应商（Top 10）</h4><canvas id="chart-overdue" height="200"></canvas></div>
+            <div class="chart-box"><h4>辅助概览：状态分布</h4><canvas id="chart-status" height="200"></canvas></div>
+            <div class="chart-box"><h4>辅助概览：应交未交供应商（Top 10）</h4><canvas id="chart-overdue" height="200"></canvas></div>
           </div>
 
           <!-- ── 交期时间节点预测 ── -->

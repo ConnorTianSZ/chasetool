@@ -1,13 +1,193 @@
 """API: Dashboard with project ID"""
 from __future__ import annotations
 
+from collections import Counter
 from datetime import date
 from typing import Optional
 from fastapi import APIRouter, Path as FPath, Query, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.db.connection import get_connection
+from app.services.material_view import clean_date_value, enrich_material_row, load_pgr_map
+from app.services.outlook_send import create_display_draft
 
 router = APIRouter(prefix="/api/projects/{project_id}/dashboard", tags=["dashboard"])
+
+
+STATE_LABELS = {
+    "no_oc": "无OC",
+    "overdue_now": "应交未交",
+    "overdue_keydate": "晚于节点",
+    "chased_no_feedback": "已催未回复",
+    "eta_mismatch": "交期不一致",
+}
+
+EXPORT_STATE_ORDER = [
+    "no_oc",
+    "overdue_now",
+    "overdue_keydate",
+    "chased_no_feedback",
+    "eta_mismatch",
+]
+
+
+class LeadBuyerExportDraftRequest(BaseModel):
+    buyer_keys: list[str] = Field(default_factory=list)
+    include_states: list[str] = Field(default_factory=lambda: list(EXPORT_STATE_ORDER))
+    evidence_by: str = "supplier"
+    key_date: Optional[str] = None
+    to: str = ""
+    cc: str = ""
+    subject: str = ""
+
+
+def _get_dashboard_key_date(conn, key_date: str | None = None) -> str:
+    cleaned = clean_date_value(key_date)
+    if cleaned:
+        return cleaned
+    row = conn.execute(
+        "SELECT value FROM project_settings WHERE key='material_key_date'"
+    ).fetchone()
+    return clean_date_value(row["value"]) if row and row["value"] else date.today().isoformat()
+
+
+def _load_enriched_materials(project_id: str, key_date: str | None = None) -> tuple[list[dict], str]:
+    pgr_map = load_pgr_map()
+    conn = get_connection(project_id)
+    try:
+        effective_key_date = _get_dashboard_key_date(conn, key_date)
+        rows = conn.execute("SELECT * FROM materials").fetchall()
+    finally:
+        conn.close()
+    return (
+        [enrich_material_row(dict(r), effective_key_date, pgr_map) for r in rows],
+        effective_key_date,
+    )
+
+
+def _is_open_material(item: dict) -> bool:
+    return (
+        (item.get("status") or "open") == "open"
+        and item.get("material_state") != "delivered"
+    )
+
+
+def _is_risk_material(item: dict) -> bool:
+    return (
+        item.get("material_state") in {"no_oc", "overdue_now", "overdue_keydate", "eta_mismatch"}
+        or item.get("chase_state") == "chased_no_feedback"
+        or bool(item.get("is_focus"))
+    )
+
+
+def _counter_top(counter: Counter, limit: int = 5) -> list[dict]:
+    return [
+        {"name": name, "count": count}
+        for name, count in sorted(counter.items(), key=lambda kv: (-kv[1], str(kv[0]).lower()))[:limit]
+    ]
+
+
+def _display_name(value: str | None, fallback: str) -> str:
+    text = (value or "").strip()
+    return text if text else fallback
+
+
+def _selected_labels(item: dict, include_states: set[str]) -> list[str]:
+    return [STATE_LABELS[state_id] for state_id in _selected_state_ids(item, include_states)]
+
+
+def _selected_state_ids(item: dict, include_states: set[str]) -> list[str]:
+    labels = []
+    state = item.get("material_state")
+    if state in include_states and state in STATE_LABELS:
+        labels.append(state)
+    if "chased_no_feedback" in include_states and item.get("chase_state") == "chased_no_feedback":
+        labels.append("chased_no_feedback")
+    return labels
+
+
+def _html_escape(value) -> str:
+    import html
+
+    return html.escape("" if value is None else str(value))
+
+
+def _build_lead_buyer_html(materials: list[dict], include_states: set[str], key_date: str) -> str:
+    by_buyer: dict[str, list[dict]] = {}
+    for item in materials:
+        labels = _selected_labels(item, include_states)
+        if not labels:
+            continue
+        item = dict(item)
+        item["_dashboard_labels"] = labels
+        item["_dashboard_state_ids"] = _selected_state_ids(item, include_states)
+        by_buyer.setdefault(item.get("buyer_display") or "未知", []).append(item)
+
+    styles = (
+        "font-family:Arial,'Microsoft YaHei',sans-serif;font-size:13px;color:#111827;"
+    )
+    table_style = "border-collapse:collapse;width:100%;font-size:12px;margin:8px 0 18px;"
+    th_style = "border:1px solid #d1d5db;background:#f3f4f6;padding:6px;text-align:left;"
+    td_style = "border:1px solid #e5e7eb;padding:5px;vertical-align:top;"
+    html_parts = [
+        f"<html><body style=\"{styles}\">",
+        f"<p>各位好，以下为 Dashboard 导出的项目交期风险清单，KEY DATE: <strong>{_html_escape(key_date)}</strong>。</p>",
+        "<p>请对应采购员优先处理无 OC、应交未交、晚于节点及已催未回复的物料。</p>",
+    ]
+
+    headers = ["采购员", "状态", "PO", "Item", "供应商", "制造商", "料号", "描述", "当前交期", "催货状态"]
+    for buyer in sorted(by_buyer):
+        rows = by_buyer[buyer]
+        html_parts.append(f"<h3 style=\"margin:18px 0 6px;\">{_html_escape(buyer)} ({len(rows)} 条)</h3>")
+        html_parts.append(f"<table style=\"{table_style}\"><thead><tr>")
+        for h in headers:
+            html_parts.append(f"<th style=\"{th_style}\">{_html_escape(h)}</th>")
+        html_parts.append("</tr></thead><tbody>")
+        for item in sorted(
+            rows,
+            key=lambda m: (
+                EXPORT_STATE_ORDER.index(m["_dashboard_state_ids"][0]) if m["_dashboard_state_ids"] else 99,
+                m.get("current_eta") or "",
+                m.get("po_number") or "",
+                m.get("item_no") or "",
+            ),
+        ):
+            values = [
+                item.get("buyer_display") or "",
+                " / ".join(item["_dashboard_labels"]),
+                item.get("po_number") or "",
+                item.get("item_no") or "",
+                item.get("supplier") or "",
+                item.get("manufacturer") or "",
+                item.get("part_no") or "",
+                item.get("description") or "",
+                item.get("display_current_eta") or "",
+                item.get("chase_label") or "",
+            ]
+            html_parts.append("<tr>")
+            for value in values:
+                html_parts.append(f"<td style=\"{td_style}\">{_html_escape(value)}</td>")
+            html_parts.append("</tr>")
+        html_parts.append("</tbody></table>")
+
+    html_parts.append("<p>Best regards</p>")
+    html_parts.append("</body></html>")
+    return "".join(html_parts)
+
+
+def _filter_export_materials(
+    materials: list[dict],
+    buyer_keys: set[str],
+    include_states: set[str],
+) -> list[dict]:
+    selected = []
+    for item in materials:
+        if not _is_open_material(item):
+            continue
+        if buyer_keys and item.get("buyer_key") not in buyer_keys:
+            continue
+        if _selected_labels(item, include_states):
+            selected.append(item)
+    return selected
 
 
 @router.get("/overview")
@@ -96,6 +276,155 @@ def chase_stats(project_id: str = FPath(...)):
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+@router.get("/lead_buyer")
+def lead_buyer(
+    project_id: str = FPath(...),
+    key_date: str | None = Query(None),
+    evidence_by: str = Query("supplier"),
+):
+    if evidence_by not in {"supplier", "manufacturer"}:
+        evidence_by = "supplier"
+
+    materials, effective_key_date = _load_enriched_materials(project_id, key_date)
+    buyer_map: dict[str, dict] = {}
+    summary = {
+        "no_oc": 0,
+        "overdue_now": 0,
+        "overdue_keydate": 0,
+        "chased_no_feedback": 0,
+        "eta_mismatch": 0,
+        "focus": 0,
+    }
+    global_suppliers: Counter = Counter()
+    global_manufacturers: Counter = Counter()
+    late_counter: Counter = Counter()
+
+    for item in materials:
+        if not _is_open_material(item):
+            continue
+
+        buyer_key = item.get("buyer_key") or "name:未知"
+        buyer = buyer_map.setdefault(
+            buyer_key,
+            {
+                "buyer_key": buyer_key,
+                "buyer_name": item.get("buyer_name") or item.get("buyer_email") or "未知",
+                "buyer_email": item.get("buyer_email") or "",
+                "buyer_display": item.get("buyer_display") or "未知",
+                "open_count": 0,
+                "no_oc_count": 0,
+                "overdue_now_count": 0,
+                "overdue_keydate_count": 0,
+                "chased_no_feedback_count": 0,
+                "eta_mismatch_count": 0,
+                "focus_count": 0,
+                "_suppliers": Counter(),
+                "_manufacturers": Counter(),
+            },
+        )
+        buyer["open_count"] += 1
+
+        state = item.get("material_state")
+        if state == "no_oc":
+            buyer["no_oc_count"] += 1
+            summary["no_oc"] += 1
+        elif state == "overdue_now":
+            buyer["overdue_now_count"] += 1
+            summary["overdue_now"] += 1
+        elif state == "overdue_keydate":
+            buyer["overdue_keydate_count"] += 1
+            summary["overdue_keydate"] += 1
+            late_name = _display_name(item.get(evidence_by), "未知")
+            late_counter[late_name] += 1
+        elif state == "eta_mismatch":
+            buyer["eta_mismatch_count"] += 1
+            summary["eta_mismatch"] += 1
+
+        if item.get("chase_state") == "chased_no_feedback":
+            buyer["chased_no_feedback_count"] += 1
+            summary["chased_no_feedback"] += 1
+        if item.get("is_focus"):
+            buyer["focus_count"] += 1
+            summary["focus"] += 1
+
+        if _is_risk_material(item):
+            supplier = _display_name(item.get("supplier"), "未知供应商")
+            manufacturer = _display_name(item.get("manufacturer"), "未知制造商")
+            buyer["_suppliers"][supplier] += 1
+            buyer["_manufacturers"][manufacturer] += 1
+            global_suppliers[supplier] += 1
+            global_manufacturers[manufacturer] += 1
+
+    buyer_rows = []
+    for buyer in buyer_map.values():
+        row = dict(buyer)
+        suppliers = row.pop("_suppliers")
+        manufacturers = row.pop("_manufacturers")
+        row["top_suppliers"] = _counter_top(suppliers, limit=3)
+        row["top_manufacturers"] = _counter_top(manufacturers, limit=3)
+        buyer_rows.append(row)
+
+    buyer_rows.sort(
+        key=lambda r: (
+            -r["overdue_now_count"],
+            -r["no_oc_count"],
+            -r["overdue_keydate_count"],
+            -r["chased_no_feedback_count"],
+            str(r["buyer_display"]).lower(),
+        )
+    )
+
+    cards = [
+        {"id": "no_oc", "label": "无OC", "value": summary["no_oc"], "tone": "warning"},
+        {"id": "overdue_now", "label": "应交未交", "value": summary["overdue_now"], "tone": "danger"},
+        {"id": "overdue_keydate", "label": "晚于节点", "value": summary["overdue_keydate"], "tone": "danger"},
+        {"id": "chased_no_feedback", "label": "已催未回复", "value": summary["chased_no_feedback"], "tone": "warning"},
+        {"id": "eta_mismatch", "label": "交期不一致", "value": summary["eta_mismatch"], "tone": "warning"},
+        {"id": "focus", "label": "重点关注", "value": summary["focus"], "tone": "primary"},
+    ]
+
+    return {
+        "key_date": effective_key_date,
+        "summary_cards": cards,
+        "buyer_rows": buyer_rows,
+        "top_suppliers": _counter_top(global_suppliers, limit=10),
+        "top_manufacturers": _counter_top(global_manufacturers, limit=10),
+        "late_evidence": _counter_top(late_counter, limit=20),
+        "config": {"evidence_by": evidence_by},
+    }
+
+
+@router.post("/lead_buyer/export_draft")
+def export_lead_buyer_draft(
+    body: LeadBuyerExportDraftRequest,
+    project_id: str = FPath(...),
+):
+    include_states = {s for s in body.include_states if s in STATE_LABELS}
+    if not include_states:
+        include_states = set(EXPORT_STATE_ORDER)
+
+    materials, effective_key_date = _load_enriched_materials(project_id, body.key_date)
+    selected = _filter_export_materials(
+        materials,
+        buyer_keys=set(body.buyer_keys or []),
+        include_states=include_states,
+    )
+
+    subject = body.subject.strip() or f"Dashboard follow up - {effective_key_date}"
+    html_body = _build_lead_buyer_html(selected, include_states, effective_key_date)
+    draft = create_display_draft(
+        to_address=body.to,
+        cc=body.cc,
+        subject=subject,
+        html_body=html_body,
+    )
+    return {
+        "ok": True,
+        "material_count": len(selected),
+        "draft": draft,
+    }
 
 
 class TimeNodeCreate(BaseModel):
