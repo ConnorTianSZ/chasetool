@@ -316,11 +316,22 @@ document.addEventListener('alpine:init', () => {
   Alpine.data('inbox', (projectId) => ({
     pid: projectId,
     items: [], total: 0, page: 1, statusFilter: '',
-    loading: false, pulling: false,
+    loading: false, pulling: false, parsingAll: false,
     lastSentAt: null,
-    pullDays: null,  // null = auto (from last sent)
+    pullDays: null,        // null = auto (from last sent)
     deepSearch: false,
     msgUploading: false,
+    pullStats: null,       // 上次拉取统计结果
+
+    // 不接受 modal 状态
+    rejectTarget: null,    // 当前操作的邮件对象
+    rejectItems:  [],      // 供选中的物料行
+    rejectEtaMode:   'single',  // 'single' | 'range'
+    rejectEtaSingle: '',
+    rejectEtaStart:  '',
+    rejectEtaEnd:    '',
+    rejectMode:  'draft',  // 'draft' | 'send'
+    rejectLoading: false,
 
     purl(p) { return `/api/projects/${this.pid}${p}`; },
 
@@ -361,15 +372,27 @@ document.addEventListener('alpine:init', () => {
 
     async pull() {
       this.pulling = true;
+      this.pullStats = null;
       try {
         const p = new URLSearchParams();
         if (this.deepSearch) p.set('deep', 'true');
         else if (this.pullDays) p.set('days', this.pullDays);
         const r = await api('POST', this.purl('/inbox/pull?') + p);
-        toast(`拉取完成：新增 ${r.pulled} 封（查找 ${r.pulled_days} 天）`, 'success');
+        this.pullStats = r;
+        toast(`查找完成：找到 ${r.pulled} 封回邮`, r.pulled > 0 ? 'success' : 'info');
         this.load();
       } catch (e) { toast(e.message, 'error'); }
       finally { this.pulling = false; }
+    },
+
+    async parseAll() {
+      this.parsingAll = true;
+      try {
+        const r = await api('POST', this.purl('/inbox/parse_all'));
+        toast(`解析完成：成功 ${r.parsed} 封${r.failed ? `，失败 ${r.failed} 封` : ''}`, 'success');
+        this.load();
+      } catch (e) { toast(e.message, 'error'); }
+      finally { this.parsingAll = false; }
     },
 
     async uploadMsg(event) {
@@ -390,7 +413,6 @@ document.addEventListener('alpine:init', () => {
       try {
         const r = await api('POST', this.purl(`/inbox/${item.id}/parse`));
         item.llm_extracted_json = r.extracted;
-        // Init per-item checkbox + editable fields
         item._itemSelections = (r.extracted?.items || []).map(ei => ({
           selected: true,
           new_eta:  ei.new_eta  || '',
@@ -405,7 +427,6 @@ document.addEventListener('alpine:init', () => {
       try {
         let edits = undefined;
         if (decision === 'apply' && item.llm_extracted_json?.items?.length) {
-          // Collect only selected items with any edits applied
           const selectedItems = item.llm_extracted_json.items
             .map((ei, i) => {
               const sel = item._itemSelections?.[i];
@@ -428,6 +449,81 @@ document.addEventListener('alpine:init', () => {
         toast({ apply:'已入库', ignore:'已忽略', manual:'已转手动处理' }[decision] || decision, 'success');
         this.load();
       } catch (e) { toast(e.message, 'error'); }
+    },
+
+    // 打开"不接受"modal，预填选中行
+    openReject(item) {
+      this.rejectTarget = item;
+      this.rejectItems  = (item.llm_extracted_json?.items || []).map((ei, i) => ({
+        selected:   item._itemSelections?.[i]?.selected !== false,
+        po_number:  ei.po_number || '',
+        item_no:    ei.item_no   || '',
+        new_eta:    item._itemSelections?.[i]?.new_eta || ei.new_eta || '',
+        part_no:    ei.matched?.part_no || '',
+      }));
+      this.rejectEtaMode   = 'single';
+      this.rejectEtaSingle = '';
+      this.rejectEtaStart  = '';
+      this.rejectEtaEnd    = '';
+      this.rejectMode      = 'draft';
+    },
+
+    // 生成正文预览
+    buildRejectPreview() {
+      if (!this.rejectTarget) return '';
+      const targetEta = this.rejectEtaMode === 'single'
+        ? (this.rejectEtaSingle || 'MM/DD')
+        : `${this.rejectEtaStart || 'MM/DD'} ~ ${this.rejectEtaEnd || 'MM/DD'}`;
+      const selected = this.rejectItems.filter(r => r.selected !== false);
+      const rows = selected.map(r =>
+        `${(r.po_number||'').padEnd(20)} ${(r.item_no||'').padEnd(8)} ${(r.new_eta||'—').padEnd(20)}`
+      ).join('\n');
+      return [
+        'Dear Supplier,',
+        '',
+        'Thank you for your feedback.',
+        '',
+        'We regret to inform you that the delivery date(s) provided are not acceptable',
+        `for our project schedule. We kindly request you to bring the delivery forward to: ${targetEta}`,
+        '',
+        'Details of affected items:',
+        '',
+        `${'PO No.'.padEnd(20)} ${'Item'.padEnd(8)} ${'Current Reply ETA'.padEnd(20)}`,
+        '-'.repeat(50),
+        rows,
+        '',
+        'Please confirm the revised delivery date at your earliest convenience.',
+        'Should there be any difficulties, please inform us immediately.',
+        '',
+        'Best regards,',
+      ].join('\n');
+    },
+
+    async submitReject() {
+      const target_eta = this.rejectEtaMode === 'single'
+        ? this.rejectEtaSingle
+        : `${this.rejectEtaStart}~${this.rejectEtaEnd}`;
+      if (!target_eta.trim()) { toast('请填写目标交期', 'error'); return; }
+
+      const selected_items = this.rejectItems
+        .filter(r => r.selected !== false)
+        .map(r => ({ po_number: r.po_number, item_no: r.item_no, current_eta: r.new_eta }));
+      if (!selected_items.length) { toast('请至少勾选一条物料', 'error'); return; }
+
+      this.rejectLoading = true;
+      try {
+        const r = await api('POST', this.purl(`/inbox/${this.rejectTarget.id}/reject`), {
+          target_eta, mode: this.rejectMode, selected_items,
+        });
+        if (r.ok) {
+          toast(r.message || (this.rejectMode === 'draft' ? '草稿已保存' : '已发送'), 'success');
+          this.rejectTarget = null;
+          this.load();
+        } else {
+          toast(r.message || '操作失败', 'error');
+        }
+      } catch (e) { toast(e.message, 'error'); }
+      finally { this.rejectLoading = false; }
     },
 
     get pullHint() {

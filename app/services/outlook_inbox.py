@@ -27,7 +27,9 @@ def pull_inbox(days: int = 14, project_id: str = "default") -> dict:
     messages.Sort("[ReceivedTime]", True)
 
     conn  = get_connection(project_id)
-    pulled, skipped = 0, 0
+    pulled            = 0   # 成功入库（有 marker）
+    skipped_duplicate = 0   # 已存在，跳过
+    skipped_no_marker = 0   # 无 [CB:...] marker，跳过
 
     # 统一转 naive 再比较，避免 aware vs naive TypeError
     since = datetime.now() - timedelta(days=days)
@@ -46,40 +48,45 @@ def pull_inbox(days: int = 14, project_id: str = "default") -> dict:
                 if _naive(recv_dt) < since:
                     break
 
+                subject = str(msg.Subject or "")
+
+                # ── 仅处理 subject 带 [CB:...] marker 的邮件 ──────────────
+                marker = parse_marker(subject)
+                if not marker:
+                    skipped_no_marker += 1
+                    continue
+
                 entry_id = msg.EntryID
                 if conn.execute(
                     "SELECT id FROM inbound_emails WHERE outlook_entry_id=?",
                     (entry_id,)
                 ).fetchone():
-                    skipped += 1
+                    skipped_duplicate += 1
                     continue
 
-                subject  = str(msg.Subject or "")
-                body     = str(msg.Body or "")
-                sender   = str(msg.SenderEmailAddress or "")
-                marker   = parse_marker(subject)
-                marker_str = marker.to_subject_tag() if marker else None
+                body   = str(msg.Body or "")
+                sender = str(msg.SenderEmailAddress or "")
+                marker_str = marker.to_subject_tag()
 
                 mat_id = None
-                if marker:
-                    if isinstance(marker, LegacyChaseMarker):
-                        row = conn.execute(
-                            "SELECT id FROM materials WHERE po_number=? AND item_no=?",
-                            (marker.po_number,
-                             marker.item_nos[0] if marker.item_nos else ""),
-                        ).fetchone()
-                        if row:
-                            mat_id = row[0]
-                    elif isinstance(marker, ChaseMarker):
-                        row = conn.execute(
-                            "SELECT material_ids_json FROM chase_log "
-                            "WHERE marker_tag=? ORDER BY sent_at DESC LIMIT 1",
-                            (marker.to_subject_tag(),),
-                        ).fetchone()
-                        if row:
-                            ids = json.loads(row[0])
-                            if ids:
-                                mat_id = ids[0]
+                if isinstance(marker, LegacyChaseMarker):
+                    row = conn.execute(
+                        "SELECT id FROM materials WHERE po_number=? AND item_no=?",
+                        (marker.po_number,
+                         marker.item_nos[0] if marker.item_nos else ""),
+                    ).fetchone()
+                    if row:
+                        mat_id = row[0]
+                elif isinstance(marker, ChaseMarker):
+                    row = conn.execute(
+                        "SELECT material_ids_json FROM chase_log "
+                        "WHERE marker_tag=? ORDER BY sent_at DESC LIMIT 1",
+                        (marker.to_subject_tag(),),
+                    ).fetchone()
+                    if row:
+                        ids = json.loads(row[0])
+                        if ids:
+                            mat_id = ids[0]
 
                 conn.execute(
                     "INSERT INTO inbound_emails "
@@ -91,10 +98,14 @@ def pull_inbox(days: int = 14, project_id: str = "default") -> dict:
                 )
                 pulled += 1
             except Exception:
-                skipped += 1
+                skipped_duplicate += 1
 
         conn.commit()
     finally:
         conn.close()
 
-    return {"pulled": pulled, "skipped": skipped}
+    return {
+        "pulled":             pulled,
+        "skipped_no_marker":  skipped_no_marker,
+        "skipped_duplicate":  skipped_duplicate,
+    }

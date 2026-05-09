@@ -63,6 +63,42 @@ def pull(
         raise HTTPException(503, f"Inbox pull failed: {e}")
 
 
+@router.post("/parse_all")
+def parse_all(
+    project_id: str = FPath(...),
+    limit: int = Query(20, ge=1, le=100),
+):
+    """批量解析所有 status='new' 的邮件，每封调一次 LLM。limit 防止费用失控。"""
+    conn = get_connection(project_id)
+    try:
+        rows = conn.execute(
+            "SELECT id FROM inbound_emails WHERE status='new' "
+            "ORDER BY received_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        email_ids = [r["id"] for r in rows]
+    finally:
+        conn.close()
+
+    parsed, failed, details = 0, 0, []
+    for eid in email_ids:
+        try:
+            r = parse_inbound_email(eid, project_id=project_id)
+            if r.get("ok"):
+                parsed += 1
+                details.append({"email_id": eid, "ok": True,
+                                 "items": len(r.get("extracted", {}).get("items") or [])})
+            else:
+                failed += 1
+                details.append({"email_id": eid, "ok": False, "reason": r.get("reason")})
+        except Exception as e:
+            failed += 1
+            details.append({"email_id": eid, "ok": False, "reason": str(e)})
+
+    return {"ok": True, "parsed": parsed, "failed": failed,
+            "total": len(email_ids), "details": details}
+
+
 @router.post("/upload_msg")
 async def upload_msg(
     project_id: str = FPath(...),
@@ -168,3 +204,102 @@ class DecisionBody(BaseModel):
 @router.post("/{email_id}/decide")
 def decide(email_id: int, body: DecisionBody, project_id: str = FPath(...)):
     return apply_inbound_decision(email_id, body.decision, body.edits, project_id=project_id)
+
+
+# ── 不接受：发加急回复邮件 ──────────────────────────────────────────
+
+class RejectBody(BaseModel):
+    target_eta: str                   # "05/20" 或 "05/15~05/20"
+    mode: str = "draft"               # "draft" | "send"
+    selected_items: list[dict] = []   # [{po_number, item_no, current_eta}]
+
+
+def _build_reject_body(selected_items: list[dict], target_eta: str,
+                        original_subject: str) -> str:
+    lines = [
+        "Dear Supplier,",
+        "",
+        "Thank you for your feedback.",
+        "",
+        ("We regret to inform you that the delivery date(s) provided are not acceptable "
+         "for our project schedule. We kindly request you to bring the delivery forward "
+         f"to: {target_eta}"),
+        "",
+        "Details of affected items:",
+        "",
+        f"{'PO No.':<20} {'Item':<8} {'Current Reply ETA':<20}",
+        "-" * 50,
+    ]
+    for it in selected_items:
+        po  = str(it.get("po_number") or "").strip()
+        itm = str(it.get("item_no") or "").strip()
+        eta = str(it.get("current_eta") or it.get("new_eta") or "—").strip()
+        lines.append(f"{po:<20} {itm:<8} {eta:<20}")
+
+    lines += [
+        "",
+        "Please confirm the revised delivery date at your earliest convenience.",
+        "Should there be any difficulties, please inform us immediately.",
+        "",
+        "Best regards,",
+    ]
+    return "\n".join(lines)
+
+
+@router.post("/{email_id}/reject")
+def reject_email(email_id: int, body: RejectBody, project_id: str = FPath(...)):
+    """对供应商回复发加急回复邮件（交期不接受）。
+
+    通过 win32com ReplyAll 回复原邮件，保留 To/CC/Subject/引用链。
+    .msg 上传邮件无法通过 COM 检索，返回 msg_upload_no_reply 错误码。
+    """
+    conn = get_connection(project_id)
+    try:
+        row = conn.execute(
+            "SELECT outlook_entry_id, subject, from_address FROM inbound_emails WHERE id=?",
+            (email_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "email not found")
+
+        entry_id = row["outlook_entry_id"] or ""
+        original_subject = row["subject"] or ""
+
+        # .msg 上传邮件无 Outlook EntryID，无法 ReplyAll
+        if entry_id.startswith("msg:"):
+            return {
+                "ok": False,
+                "error_code": "msg_upload_no_reply",
+                "message": "此邮件为手动上传的 .msg 文件，无法通过系统直接回复，请从 Outlook 手动回复。",
+            }
+
+        reply_body = _build_reject_body(body.selected_items, body.target_eta, original_subject)
+
+        try:
+            import win32com.client
+            outlook   = win32com.client.Dispatch("Outlook.Application")
+            namespace = outlook.GetNamespace("MAPI")
+            original  = namespace.GetItemFromID(entry_id)
+            reply     = original.ReplyAll()
+            reply.Body = reply_body
+            if body.mode == "send":
+                reply.Send()
+            else:
+                reply.Save()
+        except Exception as e:
+            raise HTTPException(503, f"Outlook 操作失败: {e}")
+
+        now_iso = datetime.utcnow().isoformat()
+        conn.execute(
+            "UPDATE inbound_emails SET status='rejected', operator_decision='reject',"
+            " reject_target_eta=?, reject_sent_at=?, reject_mode=? WHERE id=?",
+            (body.target_eta, now_iso, body.mode, email_id),
+        )
+        conn.commit()
+        return {
+            "ok":   True,
+            "mode": body.mode,
+            "message": "草稿已保存到 Outlook" if body.mode == "draft" else "加急回复已发送",
+        }
+    finally:
+        conn.close()

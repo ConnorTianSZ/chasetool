@@ -93,6 +93,10 @@ _MIGRATION_STMTS = [
     # Phase 4: 采购员加急后手工记录的最新交期（不被 Excel 导入覆盖）
     "ALTER TABLE materials ADD COLUMN urgent_feedback_eta DATE",
     "ALTER TABLE materials ADD COLUMN urgent_feedback_note TEXT",
+    # Phase 5: inbound_emails 不接受回复记录
+    "ALTER TABLE inbound_emails ADD COLUMN reject_target_eta TEXT",
+    "ALTER TABLE inbound_emails ADD COLUMN reject_sent_at DATETIME",
+    "ALTER TABLE inbound_emails ADD COLUMN reject_mode TEXT",
 ]
 
 _PROJECT_SETTINGS_SQL = """

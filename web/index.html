@@ -471,6 +471,7 @@
             <option value="applied">已入库</option>
             <option value="ignored">已忽略</option>
             <option value="manual">手动处理</option>
+            <option value="rejected">不接受</option>
           </select>
         </div>
 
@@ -481,6 +482,13 @@
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <button class="btn btn-primary btn-sm" @click="pull()" :disabled="pulling">
               <span x-text="pulling ? '拉取中…' : '🔄 查找回邮'"></span>
+            </button>
+            <button class="btn btn-outline btn-sm" @click="parseAll()" :disabled="parsingAll || total===0"
+              x-show="!parsingAll" title="对所有未解析邮件调用 LLM 一次性解析">
+              🤖 一键解析所有
+            </button>
+            <button class="btn btn-outline btn-sm" disabled x-show="parsingAll">
+              解析中…
             </button>
             <label class="check-label">
               <input type="checkbox" x-model="deepSearch" /> 深度查找（90天）
@@ -493,6 +501,17 @@
             </template>
             <span class="pull-hint" x-text="pullHint"></span>
           </div>
+
+          <!-- 拉取统计 banner -->
+          <template x-if="pullStats">
+            <div style="width:100%;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:6px 12px;font-size:12px;color:#15803d;display:flex;gap:16px;align-items:center;">
+              <span>✅ 查找完成</span>
+              <span>找到回邮：<strong x-text="pullStats.pulled"></strong> 封</span>
+              <span style="color:#6b7280;">跳过无标记：<span x-text="pullStats.skipped_no_marker"></span> 封</span>
+              <span style="color:#6b7280;">已存在：<span x-text="pullStats.skipped_duplicate"></span> 封</span>
+              <span style="color:#6b7280;">查找范围：<span x-text="pullStats.pulled_days"></span> 天</span>
+            </div>
+          </template>
 
           <!-- 上传 .msg 文件 -->
           <div style="display:flex;align-items:center;gap:8px;">
@@ -523,9 +542,10 @@
                     'badge-open':      item.status==='new',
                     'badge-on_hold':   item.status==='pending_confirm',
                     'badge-delivered': item.status==='applied',
-                    'badge-cancelled': item.status==='ignored'||item.status==='manual'||item.status==='rejected'||item.status==='escalate'
+                    'badge-overdue-keydate': item.status==='rejected',
+                    'badge-cancelled': item.status==='ignored'||item.status==='manual'||item.status==='escalate'
                   }"
-                  x-text="{new:'未解析',pending_confirm:'待确认',applied:'已入库',ignored:'已忽略',manual:'手动处理'}[item.status]||item.status"></span>
+                  x-text="{new:'未解析',pending_confirm:'待确认',applied:'已入库',ignored:'已忽略',manual:'手动处理',rejected:'已回复不接受'}[item.status]||item.status"></span>
               </div>
 
               <div class="inbox-card-body">
@@ -534,13 +554,12 @@
                   <!-- ── 解析结果：逐行审批表 ── -->
                   <template x-if="item.llm_extracted_json">
                     <div>
-                      <!-- 汇总行：general_remarks + 置信度 -->
-                      <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;font-size:12px;">
-                        <template x-if="item.llm_extracted_json.general_remarks">
+                      <!-- 汇总行：general_remarks -->
+                      <template x-if="item.llm_extracted_json.general_remarks">
+                        <div style="margin-bottom:6px;font-size:12px;">
                           <span style="color:#374151;">📋 <strong x-text="item.llm_extracted_json.general_remarks"></strong></span>
-                        </template>
-                        <span style="color:#9ca3af;" x-text="'置信度 ' + ((item.llm_extracted_json.confidence||0)*100).toFixed(0)+'%'"></span>
-                      </div>
+                        </div>
+                      </template>
                       <!-- 逐行物料审批表 -->
                       <div style="overflow-x:auto;">
                         <table class="eta-review-table">
@@ -619,8 +638,10 @@
                   x-show="item.status==='pending_confirm'">✅ 入库选中行</button>
                 <button class="btn btn-outline btn-sm" @click="decide(item,'ignore')"
                   x-show="item.status==='pending_confirm'">🚫 忽略</button>
-                <button class="btn btn-danger  btn-sm" @click="decide(item,'manual')"
+                <button class="btn btn-danger btn-sm" @click="decide(item,'manual')"
                   x-show="item.status==='pending_confirm'">📋 转手动</button>
+                <button class="btn btn-sm" style="background:#fef3c7;color:#b45309;border:1px solid #fcd34d;" @click="openReject(item)"
+                  x-show="item.status==='pending_confirm'">❌ 不接受</button>
               </div>
             </div>
           </template>
@@ -628,6 +649,104 @@
           <template x-if="items.length===0 && !loading">
             <div class="empty"><div class="icon">📬</div>暂无邮件，点击「查找回邮」拉取</div>
           </template>
+        </div>
+
+        <!-- ── 不接受：加急回复 Modal ── -->
+        <div class="modal-overlay" x-show="rejectTarget" @click.self="rejectTarget=null" style="display:none;">
+          <div class="modal" style="width:680px;" x-show="rejectTarget">
+            <div class="modal-header">
+              <h3>❌ 回复：交期不接受</h3>
+              <button class="modal-close" @click="rejectTarget=null">×</button>
+            </div>
+            <div class="modal-body">
+              <template x-if="rejectTarget">
+                <div>
+                  <!-- 原邮件信息 -->
+                  <div style="font-size:12px;color:#6b7280;margin-bottom:10px;">
+                    回复至：<strong x-text="rejectTarget.from_address"></strong>
+                    &nbsp;·&nbsp;<span x-text="(rejectTarget.subject||'').slice(0,60)"></span>
+                  </div>
+
+                  <!-- 选中物料行 -->
+                  <div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:6px;">针对以下物料（可取消勾选）</div>
+                  <div style="overflow-x:auto;margin-bottom:14px;">
+                    <table class="eta-review-table">
+                      <thead>
+                        <tr>
+                          <th style="width:28px;text-align:center;">☑</th>
+                          <th>PO号</th><th>行号</th><th>供应商回复交期</th><th>物料号</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <template x-for="(ri, idx) in rejectItems" :key="idx">
+                          <tr :class="ri.selected===false ? 'row-deselected' : ''">
+                            <td style="text-align:center;">
+                              <input type="checkbox" :checked="ri.selected !== false"
+                                @change="ri.selected = $event.target.checked" />
+                            </td>
+                            <td x-text="ri.po_number||'—'"></td>
+                            <td x-text="ri.item_no||'—'"></td>
+                            <td x-text="ri.new_eta||'—'"></td>
+                            <td x-text="ri.part_no||'—'"></td>
+                          </tr>
+                        </template>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <!-- 目标交期 -->
+                  <div style="display:grid;grid-template-columns:auto 1fr;gap:10px 14px;align-items:center;margin-bottom:14px;">
+                    <label class="check-label" style="grid-column:1/-1;font-size:12px;font-weight:600;color:#374151;">目标交期</label>
+                    <label class="check-label">
+                      <input type="radio" x-model="rejectEtaMode" value="single" /> 指定日期
+                    </label>
+                    <input type="text" x-show="rejectEtaMode==='single'"
+                      x-model="rejectEtaSingle" placeholder="MM/DD，如 06/15"
+                      style="width:140px;padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;" />
+                    <label class="check-label">
+                      <input type="radio" x-model="rejectEtaMode" value="range" /> 时间段
+                    </label>
+                    <div x-show="rejectEtaMode==='range'" style="display:flex;align-items:center;gap:6px;">
+                      <input type="text" x-model="rejectEtaStart" placeholder="MM/DD"
+                        style="width:90px;padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;" />
+                      <span style="color:#9ca3af;">～</span>
+                      <input type="text" x-model="rejectEtaEnd" placeholder="MM/DD"
+                        style="width:90px;padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;" />
+                    </div>
+                  </div>
+
+                  <!-- 发送方式 -->
+                  <div style="display:flex;align-items:center;gap:16px;margin-bottom:14px;font-size:13px;">
+                    <span style="font-weight:600;color:#374151;">发送方式：</span>
+                    <label class="check-label"><input type="radio" x-model="rejectMode" value="draft" /> 保存草稿到 Outlook（推荐）</label>
+                    <label class="check-label"><input type="radio" x-model="rejectMode" value="send" /> 直接发送</label>
+                  </div>
+
+                  <!-- 邮件正文预览 -->
+                  <div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:4px;">邮件正文预览</div>
+                  <textarea readonly
+                    :value="buildRejectPreview()"
+                    style="width:100%;height:160px;border:1px solid #e5e7eb;border-radius:4px;padding:8px;font-size:12px;font-family:monospace;resize:vertical;background:#f9fafb;color:#374151;outline:none;">
+                  </textarea>
+
+                  <!-- .msg 上传限制提示 -->
+                  <template x-if="rejectTarget && (rejectTarget.outlook_entry_id||'').startsWith('msg:')">
+                    <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:4px;padding:8px 12px;font-size:12px;color:#92400e;margin-top:8px;">
+                      ⚠️ 此邮件为手动上传的 .msg 文件，无法通过系统直接回复，请在 Outlook 中手动回复。
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-outline" @click="rejectTarget=null">取消</button>
+              <button class="btn btn-primary" @click="submitReject()"
+                :disabled="rejectLoading || !(rejectEtaMode==='single' ? rejectEtaSingle : rejectEtaStart&&rejectEtaEnd)"
+                x-show="!(rejectTarget && (rejectTarget.outlook_entry_id||'').startsWith('msg:'))">
+                <span x-text="rejectMode==='draft' ? '保存草稿' : '发送加急回复'"></span>
+              </button>
+            </div>
+          </div>
         </div>
 
       </div><!-- /inbox -->
