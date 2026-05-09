@@ -777,19 +777,25 @@
           <button class="btn btn-outline btn-sm" @click="init()">🔄 刷新</button>
         </div>
         <div class="content">
+
+          <!-- ── 顶部工具栏：KEY DATE + ETA Source + 导出 ── -->
           <div class="dashboard-actions">
             <label class="key-date-control">
               <span>KEY DATE</span>
-              <input type="date" x-model="leadKeyDate" @change="loadLeadBuyer()" />
+              <input type="date" x-model="leadKeyDate" @change="loadLeadBuyer();loadPivotA();loadPivotB();" />
             </label>
-            <div class="segmented">
-              <button :class="{active:evidenceBy==='supplier'}" @click="setEvidenceBy('supplier')">按供应商展开</button>
-              <button :class="{active:evidenceBy==='manufacturer'}" @click="setEvidenceBy('manufacturer')">按制造商展开</button>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="font-size:12px;color:#6b7280;font-weight:500;">ETA 基准</span>
+              <div class="segmented">
+                <button :class="{active:etaSource==='current_eta'}" @click="setEtaSource('current_eta')">Current ETA</button>
+                <button :class="{active:etaSource==='supplier_eta'}" @click="setEtaSource('supplier_eta')">Supplier ETA</button>
+              </div>
             </div>
-            <button class="btn btn-primary btn-sm" @click="openExportDraft()" :disabled="selectedBuyers.size===0">导出到 Outlook 草稿</button>
+            <button class="btn btn-primary btn-sm" @click="openExportDraft()" :disabled="selectedBuyers.size===0">📧 导出到 Outlook 草稿</button>
             <span class="selected-hint" x-show="selectedBuyers.size" x-text="'已选 ' + selectedBuyers.size + ' 个采购员'"></span>
           </div>
 
+          <!-- ── Summary Cards ── -->
           <div class="stat-grid" style="margin-bottom:16px;">
             <template x-for="card in summaryCards" :key="card.id">
               <div class="stat-card" :class="cardClass(card)">
@@ -799,79 +805,77 @@
             </template>
           </div>
 
-          <div class="card" style="margin-bottom:16px;">
-            <div class="card-header">
-              <h3>采购员催办看板</h3>
-              <button class="btn btn-outline btn-sm" @click="loadLeadBuyer()">刷新</button>
-            </div>
-            <div class="table-wrap">
-              <table class="lead-dashboard-table">
-                <thead>
-                  <tr>
-                    <th><input type="checkbox" @change="toggleAllBuyers()" :checked="buyerRows.length && selectedBuyers.size===buyerRows.length" /></th>
-                    <th>采购员</th>
-                    <th>Open</th>
-                    <th>无OC</th>
-                    <th>应交未交</th>
-                    <th>晚于节点</th>
-                    <th>已催未回复</th>
-                    <th>Top 风险供应商</th>
-                    <th>Top 风险制造商</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <template x-for="row in buyerRows" :key="row.buyer_key">
-                    <tr>
-                      <td><input type="checkbox" :checked="selectedBuyers.has(row.buyer_key)" @change="toggleBuyer(row.buyer_key)" /></td>
-                      <td>
-                        <div style="font-weight:600;" x-text="row.buyer_display"></div>
-                        <div style="font-size:11px;color:#6b7280;" x-text="row.buyer_email || ''"></div>
-                      </td>
-                      <td><button class="metric-link" @click="openMaterials(row)" x-text="row.open_count"></button></td>
-                      <td><button class="metric-link warn" @click="openMaterials(row, 'no_oc')" x-text="row.no_oc_count"></button></td>
-                      <td><button class="metric-link danger" @click="openMaterials(row, 'overdue_now')" x-text="row.overdue_now_count"></button></td>
-                      <td><button class="metric-link danger" @click="openMaterials(row, 'overdue_keydate')" x-text="row.overdue_keydate_count"></button></td>
-                      <td><button class="metric-link warn" @click="openMaterials(row, 'chased_no_feedback')" x-text="row.chased_no_feedback_count"></button></td>
-                      <td class="evidence-cell" x-text="evidenceText(row.top_suppliers)"></td>
-                      <td class="evidence-cell" x-text="evidenceText(row.top_manufacturers)"></td>
-                      <td><button class="btn btn-outline btn-sm" @click="openMaterials(row)">查看物料</button></td>
-                    </tr>
-                  </template>
-                  <template x-if="buyerRows.length===0">
-                    <tr><td colspan="10" class="empty">暂无 Dashboard 数据</td></tr>
-                  </template>
-                </tbody>
-              </table>
+          <!-- ── 采购员风险堆叠柱状图 ── -->
+          <div class="card" style="margin-bottom:16px;" x-show="buyerRows.length>0">
+            <div class="card-header"><h3>采购员风险概览</h3></div>
+            <div class="card-body" style="padding:12px;">
+              <canvas id="chart-buyer-risk" height="140"></canvas>
             </div>
           </div>
 
-          <div class="chart-grid" style="margin-bottom:16px;">
-            <div class="chart-box">
-              <h4 x-text="evidenceBy==='supplier' ? '晚于节点证据：供应商' : '晚于节点证据：制造商'"></h4>
-              <div class="evidence-list">
-                <template x-for="item in lateEvidence" :key="item.name">
-                  <div><span x-text="item.name"></span><strong x-text="item.count"></strong></div>
-                </template>
-                <div class="empty" x-show="lateEvidence.length===0" style="padding:16px;">暂无晚于节点物料</div>
+          <!-- ── 采购员催办看板 ── -->
+          <div class="card" style="margin-bottom:16px;">
+            <div class="card-header">
+              <h3>采购员催办看板</h3>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <button class="btn btn-outline btn-sm" @click="loadLeadBuyer();$nextTick(()=>renderBuyerRiskChart())">刷新</button>
+                <button class="btn btn-outline btn-sm" @click="buyerTableCollapsed=!buyerTableCollapsed"
+                  x-text="buyerTableCollapsed ? '▶ 展开' : '▼ 收起'"></button>
               </div>
             </div>
-            <div class="chart-box">
-              <h4>Top 风险供应商 / 制造商</h4>
-              <div class="evidence-list split">
-                <div>
-                  <template x-for="item in topSuppliers" :key="'s'+item.name">
-                    <div><span x-text="item.name"></span><strong x-text="item.count"></strong></div>
-                  </template>
-                </div>
-                <div>
-                  <template x-for="item in topManufacturers" :key="'m'+item.name">
-                    <div><span x-text="item.name"></span><strong x-text="item.count"></strong></div>
-                  </template>
-                </div>
+            <div x-show="!buyerTableCollapsed" style="transition:all .2s;">
+              <div class="table-wrap">
+                <table class="lead-dashboard-table">
+                  <thead>
+                    <tr>
+                      <th><input type="checkbox" @change="toggleAllBuyers()" :checked="buyerRows.length && selectedBuyers.size===buyerRows.length" /></th>
+                      <th>采购员</th>
+                      <th style="cursor:pointer;white-space:nowrap;" @click="sortBy('open_count')">
+                        Open <span x-text="sortIcon('open_count')" style="font-size:10px;"></span>
+                      </th>
+                      <th style="cursor:pointer;white-space:nowrap;" @click="sortBy('no_oc_count')">
+                        无OC <span x-text="sortIcon('no_oc_count')" style="font-size:10px;"></span>
+                      </th>
+                      <th style="cursor:pointer;white-space:nowrap;" @click="sortBy('overdue_now_count')">
+                        应交未交 <span x-text="sortIcon('overdue_now_count')" style="font-size:10px;"></span>
+                      </th>
+                      <th style="cursor:pointer;white-space:nowrap;" @click="sortBy('overdue_keydate_count')">
+                        晚于节点 <span x-text="sortIcon('overdue_keydate_count')" style="font-size:10px;"></span>
+                      </th>
+                      <th style="cursor:pointer;white-space:nowrap;" @click="sortBy('chased_no_feedback_count')">
+                        已催未回复 <span x-text="sortIcon('chased_no_feedback_count')" style="font-size:10px;"></span>
+                      </th>
+                      <th>Top 风险制造商</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template x-for="row in sortedBuyerRows" :key="row.buyer_key">
+                      <tr>
+                        <td><input type="checkbox" :checked="selectedBuyers.has(row.buyer_key)" @change="toggleBuyer(row.buyer_key)" /></td>
+                        <td>
+                          <div style="font-weight:600;" x-text="row.buyer_display"></div>
+                          <div style="font-size:11px;color:#6b7280;" x-text="row.buyer_email || ''"></div>
+                        </td>
+                        <td><button class="metric-link" @click="openMaterials(row)" x-text="row.open_count"></button></td>
+                        <td><button class="metric-link warn" @click="openMaterials(row, 'no_oc')" x-text="row.no_oc_count"></button></td>
+                        <td><button class="metric-link danger" @click="openMaterials(row, 'overdue_now')" x-text="row.overdue_now_count"></button></td>
+                        <td><button class="metric-link danger" @click="openMaterials(row, 'overdue_keydate')" x-text="row.overdue_keydate_count"></button></td>
+                        <td><button class="metric-link warn" @click="openMaterials(row, 'chased_no_feedback')" x-text="row.chased_no_feedback_count"></button></td>
+                        <td class="evidence-cell" x-text="evidenceText(row.top_manufacturers)"></td>
+                        <td><button class="btn btn-outline btn-sm" @click="openMaterials(row)">查看物料</button></td>
+                      </tr>
+                    </template>
+                    <template x-if="buyerRows.length===0">
+                      <tr><td colspan="9" class="empty">暂无 Dashboard 数据</td></tr>
+                    </template>
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
+
+          <!-- ── 导出弹窗 ── -->
           <div class="modal-overlay" x-show="showExportDraft" @click.self="showExportDraft=false" style="display:none;">
             <div class="modal" style="width:760px;" x-show="showExportDraft">
               <div class="modal-header">
@@ -881,6 +885,17 @@
               <div class="modal-body">
                 <div style="display:grid;gap:12px;">
                   <div class="form-row">
+                    <label class="field-label" style="width:70px;">导出模式</label>
+                    <div style="display:flex;gap:16px;">
+                      <label class="check-label">
+                        <input type="radio" x-model="exportMode" value="combined" /> 汇总一封（所有选中采购员合并）
+                      </label>
+                      <label class="check-label">
+                        <input type="radio" x-model="exportMode" value="per_buyer" /> 每人一封（逐一生成草稿，To 默认填采购员邮箱）
+                      </label>
+                    </div>
+                  </div>
+                  <div class="form-row" x-show="exportMode==='combined'">
                     <label class="field-label" style="width:70px;">To</label>
                     <input type="text" x-model="exportForm.to" placeholder="收件人邮箱，可为空" style="flex:1;" />
                   </div>
@@ -888,7 +903,7 @@
                     <label class="field-label" style="width:70px;">CC</label>
                     <input type="text" x-model="exportForm.cc" placeholder="抄送，可为空" style="flex:1;" />
                   </div>
-                  <div class="form-row">
+                  <div class="form-row" x-show="exportMode==='combined'">
                     <label class="field-label" style="width:70px;">Subject</label>
                     <input type="text" x-model="exportForm.subject" style="flex:1;" />
                   </div>
@@ -903,26 +918,22 @@
                     </div>
                   </div>
                   <div style="font-size:12px;color:#6b7280;">
-                    将生成一封汇总草稿，按采购员分组；不会发送邮件，也不会增加供应商催货次数。
+                    ETA 基准：<strong x-text="etaSource==='supplier_eta' ? 'Supplier ETA（空时 fallback Current ETA）' : 'Current ETA'"></strong>
+                    &nbsp;·&nbsp;不会发送邮件，也不会增加供应商催货次数。
                   </div>
                 </div>
               </div>
               <div class="modal-footer">
                 <button class="btn btn-outline" @click="showExportDraft=false">取消</button>
                 <button class="btn btn-primary" @click="exportDashboardDraft()" :disabled="exportLoading">
-                  <span x-text="exportLoading ? '正在打开草稿…' : '生成并打开草稿'"></span>
+                  <span x-text="exportLoading ? '正在打开草稿…' : (exportMode==='per_buyer' ? '逐人生成草稿' : '生成并打开草稿')"></span>
                 </button>
               </div>
             </div>
           </div>
 
-          <div class="chart-grid">
-            <div class="chart-box"><h4>辅助概览：状态分布</h4><canvas id="chart-status" height="200"></canvas></div>
-            <div class="chart-box"><h4>辅助概览：应交未交供应商（Top 10）</h4><canvas id="chart-overdue" height="200"></canvas></div>
-          </div>
-
           <!-- ── 交期时间节点预测 ── -->
-          <div class="card" style="margin-top:16px;">
+          <div class="card" style="margin-top:0;margin-bottom:16px;">
             <div class="card-header">
               <h3>交期时间节点预测</h3>
               <div style="display:flex;gap:8px;align-items:center;">
@@ -931,7 +942,6 @@
               </div>
             </div>
             <div class="card-body">
-              <!-- 添加时间节点表单 -->
               <div x-show="showAddTimeNode" style="display:flex;gap:10px;padding:12px;background:#f9fafb;border-radius:6px;margin-bottom:12px;flex-wrap:wrap;align-items:end;">
                 <div>
                   <label class="field-label">节点名称</label>
@@ -959,16 +969,14 @@
                 <button class="btn btn-outline btn-sm" @click="showAddTimeNode=false">取消</button>
               </div>
 
-              <!-- 时间节点列表 + 统计 -->
               <template x-if="timeNodes.length === 0">
                 <div style="text-align:center;padding:30px;color:#888;font-size:13px;">
-                  暂无时间节点，点击上方「添加时间节点」设置里程碑日期进行交期预测
+                  暂无时间节点，点击上方「添加时间节点」设置里程碑日期
                 </div>
               </template>
 
               <template x-if="timeNodes.length > 0">
                 <div>
-                  <!-- Tab 切换 -->
                   <div style="display:flex;gap:0;margin-bottom:14px;border-bottom:2px solid #e5e7eb;">
                     <button style="padding:6px 16px;border:none;background:none;cursor:pointer;font-size:13px;font-weight:600;"
                       :style="tnView==='overview' ? 'color:#2563eb;border-bottom:2px solid #2563eb;margin-bottom:-2px;' : 'color:#6b7280;'"
@@ -981,24 +989,14 @@
                       @click="tnView='by_supplier';loadDrilldown('supplier')">按供应商</button>
                   </div>
 
-                  <!-- 总览视图 -->
                   <template x-if="tnView === 'overview'">
                     <div>
-                      <div style="margin-bottom:16px;">
-                        <canvas id="chart-time-nodes" height="120"></canvas>
-                      </div>
+                      <div style="margin-bottom:16px;"><canvas id="chart-time-nodes" height="120"></canvas></div>
                       <div class="table-wrap">
                         <table style="font-size:13px;">
                           <thead>
                             <tr>
-                              <th>节点</th>
-                              <th>日期</th>
-                              <th>到期物料</th>
-                              <th>已逾期</th>
-                              <th>未确认交期</th>
-                              <th>占比</th>
-                              <th>Top 供应商</th>
-                              <th style="width:80px;">操作</th>
+                              <th>节点</th><th>日期</th><th>到期物料</th><th>已逾期</th><th>未确认交期</th><th>占比</th><th>Top 供应商</th><th style="width:80px;">操作</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1012,13 +1010,10 @@
                                 <td style="font-weight:600;" x-text="node.due_count"></td>
                                 <td x-text="node.overdue_count" :style="node.overdue_count>0?'color:#dc2626;font-weight:600':''"></td>
                                 <td x-text="node.no_eta_count"></td>
-                                <td>
-                                  <span x-text="node.total_open ? ((node.due_count/node.total_open*100).toFixed(1)+'%') : '—'"></span>
-                                </td>
+                                <td><span x-text="node.total_open ? ((node.due_count/node.total_open*100).toFixed(1)+'%') : '—'"></span></td>
                                 <td style="font-size:11px;max-width:200px;">
                                   <template x-for="(s,si) in node.by_supplier" :key="si">
-                                    <span x-text="s.supplier+':'+s.cnt"></span>
-                                    <span x-show="si < node.by_supplier.length-1">, </span>
+                                    <span x-text="s.supplier+':'+s.cnt"></span><span x-show="si < node.by_supplier.length-1">, </span>
                                   </template>
                                   <span x-show="!node.by_supplier.length">—</span>
                                 </td>
@@ -1034,20 +1029,15 @@
                     </div>
                   </template>
 
-                  <!-- 按采购员视图 -->
                   <template x-if="tnView === 'by_buyer'">
                     <div>
-                      <div style="margin-bottom:16px;">
-                        <canvas id="chart-drilldown" height="200"></canvas>
-                      </div>
+                      <div style="margin-bottom:16px;"><canvas id="chart-drilldown" height="200"></canvas></div>
                       <div class="table-wrap">
                         <table style="font-size:13px;">
                           <thead>
                             <tr>
                               <th>时间节点</th>
-                              <template x-for="g in drilldownGroups" :key="g">
-                                <th style="font-size:11px;" x-text="g"></th>
-                              </template>
+                              <template x-for="g in drilldownGroups" :key="g"><th style="font-size:11px;" x-text="g"></th></template>
                             </tr>
                           </thead>
                           <tbody>
@@ -1068,20 +1058,15 @@
                     </div>
                   </template>
 
-                  <!-- 按供应商视图 -->
                   <template x-if="tnView === 'by_supplier'">
                     <div>
-                      <div style="margin-bottom:16px;">
-                        <canvas id="chart-drilldown-supplier" height="200"></canvas>
-                      </div>
+                      <div style="margin-bottom:16px;"><canvas id="chart-drilldown-supplier" height="200"></canvas></div>
                       <div class="table-wrap" style="max-height:400px;overflow-y:auto;">
                         <table style="font-size:12px;">
                           <thead>
                             <tr>
                               <th>时间节点</th>
-                              <template x-for="g in drilldownGroups" :key="g">
-                                <th style="font-size:10px;max-width:80px;overflow:hidden;text-overflow:ellipsis;" x-text="g"></th>
-                              </template>
+                              <template x-for="g in drilldownGroups" :key="g"><th style="font-size:10px;max-width:80px;overflow:hidden;text-overflow:ellipsis;" x-text="g"></th></template>
                             </tr>
                           </thead>
                           <tbody>
@@ -1106,25 +1091,128 @@
             </div>
           </div>
 
-          <div class="card" style="margin-top:16px;">
-            <div class="card-header"><h3>采购员催货统计</h3></div>
-            <div class="table-wrap">
-              <table>
-                <thead><tr><th>采购员</th><th>进行中</th><th>累计催货</th><th>已回复</th><th>回复率</th></tr></thead>
-                <tbody>
-                  <template x-for="r in chaseStats" :key="r.buyer_name">
-                    <tr>
-                      <td x-text="r.buyer_name||'未知'"></td>
-                      <td x-text="r.total"></td>
-                      <td x-text="r.total_chases"></td>
-                      <td x-text="r.replied"></td>
-                      <td x-text="r.total ? ((r.replied/r.total*100).toFixed(0)+'%') : '—'"></td>
-                    </tr>
-                  </template>
-                </tbody>
-              </table>
+          <!-- ── Pivot A：Buyer × Doc.Date × Value ── -->
+          <div class="card" style="margin-bottom:16px;">
+            <div class="card-header">
+              <h3>采购员 × 下单日期 透视表</h3>
+              <div style="display:flex;gap:6px;align-items:center;">
+                <div class="segmented">
+                  <button :class="{active:pivotAValueType==='no_oc'}" @click="setPivotAValueType('no_oc')">无OC</button>
+                  <button :class="{active:pivotAValueType==='overdue_now'}" @click="setPivotAValueType('overdue_now')">应交未交</button>
+                  <button :class="{active:pivotAValueType==='overdue_keydate'}" @click="setPivotAValueType('overdue_keydate')">晚于节点</button>
+                </div>
+                <button class="btn btn-outline btn-sm" @click="loadPivotA()">🔄</button>
+              </div>
+            </div>
+            <div class="card-body" style="padding:12px;">
+              <div x-show="pivotALoading" style="text-align:center;padding:20px;color:#888;">加载中…</div>
+              <template x-if="!pivotALoading && pivotA">
+                <div>
+                  <!-- 柱状图 -->
+                  <div style="margin-bottom:16px;max-height:200px;">
+                    <canvas id="chart-pivot-a" height="160"></canvas>
+                  </div>
+                  <!-- 透视表 -->
+                  <div class="table-wrap" style="max-height:420px;overflow:auto;">
+                    <table style="font-size:12px;white-space:nowrap;">
+                      <thead>
+                        <tr>
+                          <th style="position:sticky;left:0;background:#f3f4f6;z-index:1;min-width:100px;">采购员</th>
+                          <template x-for="dt in pivotA.dates" :key="dt">
+                            <th style="text-align:center;min-width:52px;" x-text="dt"></th>
+                          </template>
+                          <th style="text-align:center;background:#f3f4f6;font-weight:700;min-width:52px;">合计</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <template x-for="buyer in pivotA.buyers" :key="buyer">
+                          <tr>
+                            <td style="position:sticky;left:0;background:#fff;font-weight:600;z-index:1;" x-text="buyer"></td>
+                            <template x-for="dt in pivotA.dates" :key="dt">
+                              <td style="text-align:center;">
+                                <span x-show="pivotACell(buyer,dt)>0"
+                                  style="display:inline-block;min-width:24px;padding:2px 4px;border-radius:3px;background:#ede9fe;color:#5b21b6;font-weight:600;cursor:pointer;"
+                                  x-text="pivotACell(buyer,dt)"
+                                  @click="openMaterials({buyer_key: pivotA?.cells && Object.keys(pivotA.cells).includes(buyer) ? buyer : buyer}, pivotAValueType)">
+                                </span>
+                                <span x-show="pivotACell(buyer,dt)===0" style="color:#d1d5db;">—</span>
+                              </td>
+                            </template>
+                            <td style="text-align:center;font-weight:700;background:#f9fafb;" x-text="pivotA.row_totals[buyer]||0"></td>
+                          </tr>
+                        </template>
+                        <!-- 合计行 -->
+                        <tr style="background:#f3f4f6;font-weight:700;">
+                          <td style="position:sticky;left:0;background:#f3f4f6;">合计</td>
+                          <template x-for="dt in pivotA.dates" :key="dt">
+                            <td style="text-align:center;" x-text="pivotA.col_totals[dt]||0"></td>
+                          </template>
+                          <td style="text-align:center;" x-text="pivotA.buyers.reduce((s,b)=>s+(pivotA.row_totals[b]||0),0)"></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div x-show="!pivotA.buyers.length" class="empty" style="padding:20px;">该维度下暂无数据</div>
+                </div>
+              </template>
             </div>
           </div>
+
+          <!-- ── Pivot B：Buyer → Manufacturer × 晚于节点 ── -->
+          <div class="card" style="margin-bottom:16px;">
+            <div class="card-header">
+              <h3>采购员 → 制造商 晚于节点明细</h3>
+              <button class="btn btn-outline btn-sm" @click="loadPivotB()">🔄</button>
+            </div>
+            <div class="card-body" style="padding:12px;">
+              <div x-show="pivotBLoading" style="text-align:center;padding:20px;color:#888;">加载中…</div>
+              <template x-if="!pivotBLoading && pivotB">
+                <div>
+                  <!-- Stacked Bar -->
+                  <div style="margin-bottom:16px;max-height:220px;">
+                    <canvas id="chart-pivot-b" height="180"></canvas>
+                  </div>
+                  <!-- 层级表格 -->
+                  <div class="table-wrap">
+                    <table style="font-size:13px;">
+                      <thead>
+                        <tr><th style="min-width:140px;">采购员 / 制造商</th><th style="text-align:center;width:80px;">晚于节点</th></tr>
+                      </thead>
+                      <tbody>
+                        <template x-for="row in pivotB.rows" :key="row.buyer">
+                          <!-- Buyer 行 -->
+                          <tr style="background:#f9fafb;cursor:pointer;" @click="togglePivotBBuyer(row.buyer)">
+                            <td style="font-weight:700;padding-left:8px;">
+                              <span x-text="pivotBExpanded.has(row.buyer) ? '▼ ' : '▶ '"></span>
+                              <span x-text="row.buyer"></span>
+                              <span style="font-size:11px;color:#6b7280;margin-left:4px;" x-text="row.buyer_email ? '('+row.buyer_email+')' : ''"></span>
+                            </td>
+                            <td style="text-align:center;font-weight:700;color:#7c3aed;" x-text="row.total"></td>
+                          </tr>
+                          <!-- Manufacturer 子行 -->
+                          <template x-if="pivotBExpanded.has(row.buyer)">
+                            <template x-for="mfr in row.manufacturers" :key="mfr.name">
+                              <tr>
+                                <td style="padding-left:32px;color:#374151;">
+                                  <span style="color:#9ca3af;margin-right:4px;">└</span>
+                                  <span x-text="mfr.name"></span>
+                                </td>
+                                <td style="text-align:center;" x-text="mfr.count"></td>
+                              </tr>
+                            </template>
+                          </template>
+                        </template>
+                        <template x-if="pivotB.rows.length===0">
+                          <tr><td colspan="2" class="empty">暂无晚于节点物料</td></tr>
+                        </template>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+
         </div>
       </div>
     </template>

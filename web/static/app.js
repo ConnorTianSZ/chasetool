@@ -551,320 +551,413 @@ document.addEventListener('alpine:init', () => {
     },
   }));
 
-  	// ── Dashboard ────────────────────────────────────────────────────
-	Alpine.data('dashboard', (projectId) => ({
-	    pid: projectId,
-	    overview: {}, byStatus: [], overdueSuppliers: [], chaseStats: [],
-	    loading: false, _charts: {},
-	    leadKeyDate: '',
-	    evidenceBy: 'supplier',
-	    summaryCards: [],
-	    buyerRows: [],
-	    topSuppliers: [],
-	    topManufacturers: [],
-	    lateEvidence: [],
-	    selectedBuyers: new Set(),
-	    showExportDraft: false,
-	    exportLoading: false,
-	    exportForm: {
-	      to: '',
-	      cc: '',
-	      subject: '',
-	      includeStates: {
-	        no_oc: true,
-	        overdue_now: true,
-	        overdue_keydate: true,
-	        chased_no_feedback: true,
-	        eta_mismatch: true,
-	      },
-	    },
+  // ── Dashboard ────────────────────────────────────────────────────
+  Alpine.data('dashboard', (projectId) => ({
+    pid: projectId,
+    loading: false,
+    _charts: {},
 
-	    // 时间节点
-	    timeNodes: [],
-	    timeNodeStats: [],
-	    showAddTimeNode: false,
-	    newTimeNode: { label: '', node_date: '', color: '#2563eb', sort_order: 0 },
-	    colorPresets: ['#2563eb', '#16a34a', '#d97706', '#dc2626', '#7e22ce', '#0d9488', '#ca8a04', '#0891b2'],
+    // ── ETA Source（全局，作用于所有看板）
+    etaSource: 'current_eta',
 
-	    // 钻取视图
-	    tnView: 'overview',
-	    drilldownData: [],
-	    drilldownGroups: [],
+    // ── Key Date
+    leadKeyDate: '',
 
-	    purl(p) { return `/api/projects/${this.pid}${p}`; },
+    // ── 采购员催办看板
+    summaryCards: [],
+    buyerRows: [],
+    buyerTableCollapsed: false,
+    sortKey: 'overdue_now_count',
+    sortAsc: false,
+    selectedBuyers: new Set(),
 
-	    async init() {
-	      this.loading = true;
-	      try {
-	        await this.loadLeadBuyer();
-	        [this.overview, this.byStatus, this.overdueSuppliers, this.chaseStats] = await Promise.all([
-	          api('GET', this.purl('/dashboard/overview')),
-	          api('GET', this.purl('/dashboard/aggregates?group_by=status')),
-	          api('GET', this.purl('/dashboard/overdue_by_supplier')),
-	          api('GET', this.purl('/dashboard/chase_stats')),
-	        ]);
-	        this.$nextTick(() => this.renderCharts());
-	      } catch (e) { toast(e.message, 'error'); }
-	      finally { this.loading = false; }
-	      await this.loadTimeNodes();
-	    },
+    // ── 导出
+    showExportDraft: false,
+    exportLoading: false,
+    exportMode: 'combined',
+    exportForm: {
+      to: '', cc: '', subject: '',
+      includeStates: { no_oc: true, overdue_now: true, overdue_keydate: true, chased_no_feedback: true, eta_mismatch: true },
+    },
 
-	    get selectedBuyerKeys() { return [...this.selectedBuyers]; },
+    // ── 时间节点
+    timeNodes: [],
+    timeNodeStats: [],
+    showAddTimeNode: false,
+    newTimeNode: { label: '', node_date: '', color: '#2563eb', sort_order: 0 },
+    colorPresets: ['#2563eb', '#16a34a', '#d97706', '#dc2626', '#7e22ce', '#0d9488', '#ca8a04', '#0891b2'],
+    tnView: 'overview',
+    drilldownData: [],
+    drilldownGroups: [],
 
-	    selectedStateIds() {
-	      return Object.entries(this.exportForm.includeStates)
-	        .filter(([, enabled]) => enabled)
-	        .map(([id]) => id);
-	    },
+    // ── Pivot A
+    pivotA: null,
+    pivotALoading: false,
+    pivotAValueType: 'overdue_keydate',
 
-	    async loadLeadBuyer() {
-	      const p = new URLSearchParams({ evidence_by: this.evidenceBy });
-	      if (this.leadKeyDate) p.set('key_date', this.leadKeyDate);
-	      const data = await api('GET', this.purl('/dashboard/lead_buyer?') + p);
-	      this.leadKeyDate = data.key_date || this.leadKeyDate;
-	      this.summaryCards = data.summary_cards || [];
-	      this.buyerRows = data.buyer_rows || [];
-	      this.topSuppliers = data.top_suppliers || [];
-	      this.topManufacturers = data.top_manufacturers || [];
-	      this.lateEvidence = data.late_evidence || [];
-	      const validKeys = new Set(this.buyerRows.map(r => r.buyer_key));
-	      this.selectedBuyers = new Set([...this.selectedBuyers].filter(k => validKeys.has(k)));
-	    },
+    // ── Pivot B
+    pivotB: null,
+    pivotBLoading: false,
+    pivotBExpanded: new Set(),
 
-	    async setEvidenceBy(value) {
-	      this.evidenceBy = value;
-	      try { await this.loadLeadBuyer(); }
-	      catch (e) { toast(e.message, 'error'); }
-	    },
+    purl(p) { return `/api/projects/${this.pid}${p}`; },
 
-	    toggleBuyer(key) {
-	      this.selectedBuyers.has(key) ? this.selectedBuyers.delete(key) : this.selectedBuyers.add(key);
-	      this.selectedBuyers = new Set(this.selectedBuyers);
-	    },
+    async init() {
+      this.loading = true;
+      try {
+        await this.loadLeadBuyer();
+        this.$nextTick(() => this.renderBuyerRiskChart());
+      } catch (e) { toast(e.message, 'error'); }
+      finally { this.loading = false; }
+      await this.loadTimeNodes();
+      await Promise.all([this.loadPivotA(), this.loadPivotB()]);
+    },
 
-	    toggleAllBuyers() {
-	      this.selectedBuyers = this.selectedBuyers.size === this.buyerRows.length
-	        ? new Set()
-	        : new Set(this.buyerRows.map(r => r.buyer_key));
-	    },
+    // ── ETA Source 切换（重载所有看板）
+    async setEtaSource(src) {
+      this.etaSource = src;
+      try {
+        await this.loadLeadBuyer();
+        this.$nextTick(() => this.renderBuyerRiskChart());
+        await Promise.all([this.loadPivotA(), this.loadPivotB()]);
+      } catch (e) { toast(e.message, 'error'); }
+    },
 
-	    evidenceText(items) {
-	      return (items || []).length ? items.map(i => `${i.name}:${i.count}`).join(', ') : '—';
-	    },
+    // ── 采购员看板排序
+    get sortedBuyerRows() {
+      const key = this.sortKey;
+      const asc = this.sortAsc;
+      return [...this.buyerRows].sort((a, b) => {
+        const va = a[key] ?? 0, vb = b[key] ?? 0;
+        if (va === vb) return String(a.buyer_display).localeCompare(String(b.buyer_display));
+        return asc ? va - vb : vb - va;
+      });
+    },
 
-	    cardClass(card) {
-	      return {
-	        danger: card.tone === 'danger',
-	        warning: card.tone === 'warning',
-	        primary: card.tone === 'primary',
-	        success: card.tone === 'success',
-	      };
-	    },
+    sortBy(key) {
+      if (this.sortKey === key) this.sortAsc = !this.sortAsc;
+      else { this.sortKey = key; this.sortAsc = false; }
+    },
 
-	    openMaterials(row, stateId = '') {
-	      const filters = { buyer_key: [row.buyer_key] };
-	      if (stateId === 'chased_no_feedback') {
-	        filters.chase_state = 'chased_no_feedback';
-	      } else if (stateId) {
-	        filters.material_state = [stateId];
-	      }
-	      if (this.leadKeyDate) filters.key_date = this.leadKeyDate;
-	      Alpine.store('nav').openMaterials(filters);
-	    },
+    sortIcon(key) {
+      if (this.sortKey !== key) return '⇅';
+      return this.sortAsc ? '▲' : '▼';
+    },
 
-	    openExportDraft() {
-	      if (!this.selectedBuyers.size) {
-	        toast('请先勾选采购员', 'info');
-	        return;
-	      }
-	      this.exportForm.subject = this.exportForm.subject || `Dashboard follow up - ${this.leadKeyDate || ''}`;
-	      this.showExportDraft = true;
-	    },
+    async loadLeadBuyer() {
+      const p = new URLSearchParams({ eta_source: this.etaSource });
+      if (this.leadKeyDate) p.set('key_date', this.leadKeyDate);
+      const data = await api('GET', this.purl('/dashboard/lead_buyer?') + p);
+      this.leadKeyDate = data.key_date || this.leadKeyDate;
+      this.summaryCards = data.summary_cards || [];
+      this.buyerRows = data.buyer_rows || [];
+      const validKeys = new Set(this.buyerRows.map(r => r.buyer_key));
+      this.selectedBuyers = new Set([...this.selectedBuyers].filter(k => validKeys.has(k)));
+    },
 
-	    async exportDashboardDraft() {
-	      const includeStates = this.selectedStateIds();
-	      if (!includeStates.length) {
-	        toast('请至少选择一种状态', 'info');
-	        return;
-	      }
-	      this.exportLoading = true;
-	      try {
-	        const result = await api('POST', this.purl('/dashboard/lead_buyer/export_draft'), {
-	          buyer_keys: this.selectedBuyerKeys,
-	          include_states: includeStates,
-	          evidence_by: this.evidenceBy,
-	          key_date: this.leadKeyDate,
-	          to: this.exportForm.to,
-	          cc: this.exportForm.cc,
-	          subject: this.exportForm.subject,
-	        });
-	        toast(`草稿已打开到 Outlook（${result.material_count || 0} 条物料）`, 'success');
-	        this.showExportDraft = false;
-	      } catch (e) { toast(e.message, 'error'); }
-	      finally { this.exportLoading = false; }
-	    },
+    get selectedBuyerKeys() { return [...this.selectedBuyers]; },
 
-	    renderCharts() {
-	      const statusCtx = document.getElementById('chart-status');
-	      if (statusCtx && this.byStatus.length) {
-	        if (this._charts.status) this._charts.status.destroy();
-	        this._charts.status = new Chart(statusCtx, {
-	          type: 'doughnut',
-	          data: {
-	            labels: this.byStatus.map(s => s.g || '未知'),
-	            datasets: [{
-	              data: this.byStatus.map(s => s.cnt || 0),
-	              backgroundColor: ['#2563eb', '#16a34a', '#6b7280', '#d97706', '#dc2626'],
-	            }],
-	          },
-	          options: { responsive: true, plugins: { legend: { position: 'bottom' } } },
-	        });
-	      }
-	      const overdueCtx = document.getElementById('chart-overdue');
-	      if (overdueCtx && this.overdueSuppliers.length) {
-	        if (this._charts.overdue) this._charts.overdue.destroy();
-	        const top10 = this.overdueSuppliers.slice(0, 10);
-	        this._charts.overdue = new Chart(overdueCtx, {
-	          type: 'bar',
-	          data: {
-	            labels: top10.map(s => s.supplier || '未知'),
-	            datasets: [{
-	              label: '逾期数量',
-	              data: top10.map(s => s.overdue_count || 0),
-	              backgroundColor: '#dc2626',
-	            }],
-	          },
-	          options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false } }, y: { beginAtZero: true, ticks: { stepSize: 1 } } } },
-	        });
-	      }
-	    },
+    selectedStateIds() {
+      return Object.entries(this.exportForm.includeStates)
+        .filter(([, enabled]) => enabled).map(([id]) => id);
+    },
 
-	    async loadTimeNodes() {
-	      try {
-	        [this.timeNodes, this.timeNodeStats] = await Promise.all([
-	          api('GET', this.purl('/dashboard/time_nodes')),
-	          api('GET', this.purl('/dashboard/time_node_stats')),
-	        ]);
-	        this.$nextTick(() => this.renderTimeNodeChart());
-	      } catch (e) { toast(e.message, 'error'); }
-	    },
+    toggleBuyer(key) {
+      this.selectedBuyers.has(key) ? this.selectedBuyers.delete(key) : this.selectedBuyers.add(key);
+      this.selectedBuyers = new Set(this.selectedBuyers);
+    },
 
-	    async loadDrilldown(groupBy) {
-	      try {
-	        const data = await api('GET', this.purl(`/dashboard/time_node_drilldown?group_by=${groupBy}`));
-	        this.drilldownData = data;
-	        const nameSet = new Set();
-	        data.forEach(n => (n.groups || []).forEach(g => nameSet.add(g.name)));
-	        const totals = {};
-	        data.forEach(n => (n.groups || []).forEach(g => { totals[g.name] = (totals[g.name]||0) + g.due_count; }));
-	        this.drilldownGroups = [...nameSet].sort((a,b) => (totals[b]||0) - (totals[a]||0)).slice(0,15);
-	        data.forEach(n => {
-	          n.groupMap = {};
-	          (n.groups || []).forEach(g => { n.groupMap[g.name] = g.due_count; });
-	        });
-	        this.$nextTick(() => this.renderDrilldownChart(groupBy));
-	      } catch (e) { toast(e.message, 'error'); }
-	    },
+    toggleAllBuyers() {
+      this.selectedBuyers = this.selectedBuyers.size === this.buyerRows.length
+        ? new Set() : new Set(this.buyerRows.map(r => r.buyer_key));
+    },
 
-	    async createTimeNode() {
-	      if (!this.newTimeNode.label || !this.newTimeNode.node_date) return;
-	      try {
-	        await api('POST', this.purl('/dashboard/time_nodes'), { ...this.newTimeNode });
-	        toast('时间节点已添加', 'success');
-	        this.newTimeNode = { label: '', node_date: '', color: '#2563eb', sort_order: 0 };
-	        this.showAddTimeNode = false;
-	        await this.loadTimeNodes();
-	      } catch (e) { toast(e.message, 'error'); }
-	    },
+    evidenceText(items) {
+      return (items || []).length ? items.map(i => `${i.name}:${i.count}`).join(', ') : '—';
+    },
 
-	    async editTimeNode(node) {
-	      const newLabel = prompt('节点名称：', node.label);
-	      if (newLabel === null) return;
-	      const newDate = prompt('日期（YYYY-MM-DD）：', node.node_date);
-	      if (newDate === null) return;
-	      try {
-	        await api('PUT', this.purl(`/dashboard/time_nodes/${node.id}`), { label: newLabel, node_date: newDate });
-	        toast('已更新', 'success');
-	        await this.loadTimeNodes();
-	      } catch (e) { toast(e.message, 'error'); }
-	    },
+    cardClass(card) {
+      return { danger: card.tone==='danger', warning: card.tone==='warning', primary: card.tone==='primary', success: card.tone==='success' };
+    },
 
-	    async deleteTimeNode(id) {
-	      if (!confirm('确定删除此时间节点？')) return;
-	      try {
-	        await api('DELETE', this.purl(`/dashboard/time_nodes/${id}`));
-	        toast('已删除', 'success');
-	        await this.loadTimeNodes();
-	      } catch (e) { toast(e.message, 'error'); }
-	    },
+    openMaterials(row, stateId = '') {
+      const filters = { buyer_key: [row.buyer_key] };
+      if (stateId === 'chased_no_feedback') filters.chase_state = 'chased_no_feedback';
+      else if (stateId) filters.material_state = [stateId];
+      if (this.leadKeyDate) filters.key_date = this.leadKeyDate;
+      Alpine.store('nav').openMaterials(filters);
+    },
 
-	    renderTimeNodeChart() {
-	      const ctx = document.getElementById('chart-time-nodes');
-	      if (!ctx || !this.timeNodeStats.length) return;
-	      if (this._charts.timeNodes) this._charts.timeNodes.destroy();
+    // ── 导出
+    openExportDraft() {
+      if (!this.selectedBuyers.size) { toast('请先勾选采购员', 'info'); return; }
+      this.exportForm.subject = this.exportForm.subject || `Dashboard follow up - ${this.leadKeyDate || ''}`;
+      this.showExportDraft = true;
+    },
 
-	      const colors = this.timeNodeStats.map(n => {
-	        const matched = this.timeNodes.find(t => t.id === n.id);
-	        return matched?.color || '#2563eb';
-	      });
+    async exportDashboardDraft() {
+      const includeStates = this.selectedStateIds();
+      if (!includeStates.length) { toast('请至少选择一种状态', 'info'); return; }
+      this.exportLoading = true;
+      try {
+        if (this.exportMode === 'combined') {
+          const result = await api('POST', this.purl('/dashboard/lead_buyer/export_draft'), {
+            buyer_keys: this.selectedBuyerKeys,
+            include_states: includeStates,
+            eta_source: this.etaSource,
+            key_date: this.leadKeyDate,
+            to: this.exportForm.to,
+            cc: this.exportForm.cc,
+            subject: this.exportForm.subject,
+          });
+          toast(`草稿已打开到 Outlook（${result.material_count || 0} 条物料）`, 'success');
+          this.showExportDraft = false;
+        } else {
+          const keys = this.selectedBuyerKeys;
+          let total = 0;
+          for (const bk of keys) {
+            const buyerRow = this.buyerRows.find(r => r.buyer_key === bk);
+            const toAddr = buyerRow?.buyer_email || this.exportForm.to || '';
+            const subj = `Dashboard follow up - ${buyerRow?.buyer_display || bk} - ${this.leadKeyDate || ''}`;
+            const result = await api('POST', this.purl('/dashboard/lead_buyer/export_draft'), {
+              buyer_keys: [bk],
+              include_states: includeStates,
+              eta_source: this.etaSource,
+              key_date: this.leadKeyDate,
+              to: toAddr,
+              cc: this.exportForm.cc,
+              subject: subj,
+            });
+            total += result.material_count || 0;
+            await new Promise(r => setTimeout(r, 120));
+          }
+          toast(`已为 ${keys.length} 位采购员各生成一封草稿（共 ${total} 条物料）`, 'success');
+          this.showExportDraft = false;
+        }
+      } catch (e) { toast(e.message, 'error'); }
+      finally { this.exportLoading = false; }
+    },
 
-	      this._charts.timeNodes = new Chart(ctx, {
-	        type: 'bar',
-	        data: {
-	          labels: this.timeNodeStats.map(n => n.label),
-	          datasets: [
-	            {
-	              label: '到期物料',
-	              data: this.timeNodeStats.map(n => n.due_count),
-	              backgroundColor: colors,
-	            },
-	            {
-	              label: '已逾期',
-	              data: this.timeNodeStats.map(n => n.overdue_count),
-	              backgroundColor: '#dc2626',
-	            },
-	          ],
-	        },
-	        options: {
-	          responsive: true,
-	          plugins: { legend: { position: 'bottom' } },
-	          scales: {
-	            x: { grid: { display: false } },
-	            y: { beginAtZero: true, ticks: { stepSize: 1 } },
-	          },
-	        },
-	      });
-	    },
+    // ── 采购员风险堆叠柱状图
+    renderBuyerRiskChart() {
+      const ctx = document.getElementById('chart-buyer-risk');
+      if (!ctx || !this.buyerRows.length) return;
+      if (this._charts.buyerRisk) this._charts.buyerRisk.destroy();
+      const rows = [...this.buyerRows].sort((a, b) =>
+        (b.no_oc_count + b.overdue_now_count + b.overdue_keydate_count) -
+        (a.no_oc_count + a.overdue_now_count + a.overdue_keydate_count)
+      ).slice(0, 15);
+      this._charts.buyerRisk = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: rows.map(r => r.buyer_display),
+          datasets: [
+            { label: '无OC', data: rows.map(r => r.no_oc_count), backgroundColor: '#f59e0b', stack: 'risk' },
+            { label: '应交未交', data: rows.map(r => r.overdue_now_count), backgroundColor: '#dc2626', stack: 'risk' },
+            { label: '晚于节点', data: rows.map(r => r.overdue_keydate_count), backgroundColor: '#7c3aed', stack: 'risk' },
+          ],
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } } },
+          scales: {
+            x: { stacked: true, grid: { display: false }, ticks: { maxRotation: 30 } },
+            y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } },
+          },
+        },
+      });
+    },
 
-	    renderDrilldownChart(groupBy) {
-	      const chartId = groupBy === 'supplier' ? 'chart-drilldown-supplier' : 'chart-drilldown';
-	      const ctx = document.getElementById(chartId);
-	      if (!ctx || !this.drilldownData.length) return;
-	      const chartKey = groupBy === 'supplier' ? 'drilldownSupplier' : 'drilldown';
-	      if (this._charts[chartKey]) this._charts[chartKey].destroy();
+    // ── 时间节点
+    async loadTimeNodes() {
+      try {
+        [this.timeNodes, this.timeNodeStats] = await Promise.all([
+          api('GET', this.purl('/dashboard/time_nodes')),
+          api('GET', this.purl('/dashboard/time_node_stats')),
+        ]);
+        this.$nextTick(() => this.renderTimeNodeChart());
+      } catch (e) { toast(e.message, 'error'); }
+    },
 
-	      const labels = this.drilldownData.map(n => n.label);
-	      const colors = this.colorPresets;
-	      const datasets = this.drilldownGroups.map((name, i) => ({
-	        label: name,
-	        data: this.drilldownData.map(n => n.groupMap[name] || 0),
-	        backgroundColor: colors[i % colors.length],
-	      }));
-	      this._charts[chartKey] = new Chart(ctx, {
-	        type: 'bar',
-	        data: { labels, datasets },
-	        options: {
-	          responsive: true,
-	          plugins: {
-	            legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } },
-	          },
-	          scales: {
-	            x: { grid: { display: false } },
-	            y: { beginAtZero: true, ticks: { stepSize: 1 } },
-	          },
-	        },
-	      });
-	    },
+    async loadDrilldown(groupBy) {
+      try {
+        const data = await api('GET', this.purl(`/dashboard/time_node_drilldown?group_by=${groupBy}`));
+        this.drilldownData = data;
+        const nameSet = new Set();
+        data.forEach(n => (n.groups || []).forEach(g => nameSet.add(g.name)));
+        const totals = {};
+        data.forEach(n => (n.groups || []).forEach(g => { totals[g.name] = (totals[g.name]||0) + g.due_count; }));
+        this.drilldownGroups = [...nameSet].sort((a,b) => (totals[b]||0) - (totals[a]||0)).slice(0,15);
+        data.forEach(n => { n.groupMap = {}; (n.groups || []).forEach(g => { n.groupMap[g.name] = g.due_count; }); });
+        this.$nextTick(() => this.renderDrilldownChart(groupBy));
+      } catch (e) { toast(e.message, 'error'); }
+    },
+
+    async createTimeNode() {
+      if (!this.newTimeNode.label || !this.newTimeNode.node_date) return;
+      try {
+        await api('POST', this.purl('/dashboard/time_nodes'), { ...this.newTimeNode });
+        toast('时间节点已添加', 'success');
+        this.newTimeNode = { label: '', node_date: '', color: '#2563eb', sort_order: 0 };
+        this.showAddTimeNode = false;
+        await this.loadTimeNodes();
+      } catch (e) { toast(e.message, 'error'); }
+    },
+
+    async editTimeNode(node) {
+      const newLabel = prompt('节点名称：', node.label);
+      if (newLabel === null) return;
+      const newDate = prompt('日期（YYYY-MM-DD）：', node.node_date);
+      if (newDate === null) return;
+      try {
+        await api('PUT', this.purl(`/dashboard/time_nodes/${node.id}`), { label: newLabel, node_date: newDate });
+        toast('已更新', 'success');
+        await this.loadTimeNodes();
+      } catch (e) { toast(e.message, 'error'); }
+    },
+
+    async deleteTimeNode(id) {
+      if (!confirm('确定删除此时间节点？')) return;
+      try {
+        await api('DELETE', this.purl(`/dashboard/time_nodes/${id}`));
+        toast('已删除', 'success');
+        await this.loadTimeNodes();
+      } catch (e) { toast(e.message, 'error'); }
+    },
+
+    renderTimeNodeChart() {
+      const ctx = document.getElementById('chart-time-nodes');
+      if (!ctx || !this.timeNodeStats.length) return;
+      if (this._charts.timeNodes) this._charts.timeNodes.destroy();
+      const colors = this.timeNodeStats.map(n => this.timeNodes.find(t => t.id === n.id)?.color || '#2563eb');
+      this._charts.timeNodes = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: this.timeNodeStats.map(n => n.label),
+          datasets: [
+            { label: '到期物料', data: this.timeNodeStats.map(n => n.due_count), backgroundColor: colors },
+            { label: '已逾期', data: this.timeNodeStats.map(n => n.overdue_count), backgroundColor: '#dc2626' },
+          ],
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { position: 'bottom' } },
+          scales: { x: { grid: { display: false } }, y: { beginAtZero: true, ticks: { stepSize: 1 } } },
+        },
+      });
+    },
+
+    renderDrilldownChart(groupBy) {
+      const chartId = groupBy === 'supplier' ? 'chart-drilldown-supplier' : 'chart-drilldown';
+      const ctx = document.getElementById(chartId);
+      if (!ctx || !this.drilldownData.length) return;
+      const chartKey = groupBy === 'supplier' ? 'drilldownSupplier' : 'drilldown';
+      if (this._charts[chartKey]) this._charts[chartKey].destroy();
+      const labels = this.drilldownData.map(n => n.label);
+      const datasets = this.drilldownGroups.map((name, i) => ({
+        label: name, data: this.drilldownData.map(n => n.groupMap[name] || 0),
+        backgroundColor: this.colorPresets[i % this.colorPresets.length],
+      }));
+      this._charts[chartKey] = new Chart(ctx, {
+        type: 'bar', data: { labels, datasets },
+        options: {
+          responsive: true,
+          plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } } },
+          scales: { x: { grid: { display: false } }, y: { beginAtZero: true, ticks: { stepSize: 1 } } },
+        },
+      });
+    },
+
+    // ── Pivot A
+    async loadPivotA() {
+      this.pivotALoading = true;
+      try {
+        const p = new URLSearchParams({ value_type: this.pivotAValueType, eta_source: this.etaSource });
+        if (this.leadKeyDate) p.set('key_date', this.leadKeyDate);
+        this.pivotA = await api('GET', this.purl('/dashboard/pivot_buyer_docdate?') + p);
+        this.$nextTick(() => this.renderPivotAChart());
+      } catch (e) { toast(e.message, 'error'); }
+      finally { this.pivotALoading = false; }
+    },
+
+    async setPivotAValueType(vt) {
+      this.pivotAValueType = vt;
+      await this.loadPivotA();
+    },
+
+    pivotACell(buyer, date) {
+      return (this.pivotA?.cells?.[buyer]?.[date]) || 0;
+    },
+
+    pivotAValueLabel() {
+      return { no_oc: '无OC', overdue_now: '应交未交', overdue_keydate: '晚于节点' }[this.pivotAValueType] || '';
+    },
+
+    renderPivotAChart() {
+      const ctx = document.getElementById('chart-pivot-a');
+      if (!ctx || !this.pivotA?.buyers?.length) return;
+      if (this._charts.pivotA) this._charts.pivotA.destroy();
+      const buyers = this.pivotA.buyers.slice(0, 15);
+      const values = buyers.map(b => this.pivotA.row_totals[b] || 0);
+      this._charts.pivotA = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: buyers,
+          datasets: [{ label: this.pivotAValueLabel(), data: values, backgroundColor: '#7c3aed', borderRadius: 4 }],
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: { x: { beginAtZero: true, ticks: { stepSize: 1 } }, y: { grid: { display: false } } },
+        },
+      });
+    },
+
+    // ── Pivot B
+    async loadPivotB() {
+      this.pivotBLoading = true;
+      try {
+        const p = new URLSearchParams({ eta_source: this.etaSource });
+        if (this.leadKeyDate) p.set('key_date', this.leadKeyDate);
+        this.pivotB = await api('GET', this.purl('/dashboard/pivot_buyer_manufacturer?') + p);
+        this.$nextTick(() => this.renderPivotBChart());
+      } catch (e) { toast(e.message, 'error'); }
+      finally { this.pivotBLoading = false; }
+    },
+
+    togglePivotBBuyer(buyer) {
+      this.pivotBExpanded.has(buyer) ? this.pivotBExpanded.delete(buyer) : this.pivotBExpanded.add(buyer);
+      this.pivotBExpanded = new Set(this.pivotBExpanded);
+    },
+
+    renderPivotBChart() {
+      const ctx = document.getElementById('chart-pivot-b');
+      if (!ctx || !this.pivotB?.rows?.length) return;
+      if (this._charts.pivotB) this._charts.pivotB.destroy();
+      const rows = this.pivotB.rows.slice(0, 12);
+      const mfrTotals = {};
+      rows.forEach(r => r.manufacturers.forEach(m => { mfrTotals[m.name] = (mfrTotals[m.name]||0) + m.count; }));
+      const topMfrs = Object.entries(mfrTotals).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([n])=>n);
+      const datasets = topMfrs.map((mfr, i) => ({
+        label: mfr,
+        data: rows.map(r => r.manufacturers.find(m => m.name===mfr)?.count || 0),
+        backgroundColor: this.colorPresets[i % this.colorPresets.length],
+        stack: 'mfr',
+      }));
+      this._charts.pivotB = new Chart(ctx, {
+        type: 'bar',
+        data: { labels: rows.map(r => r.buyer), datasets },
+        options: {
+          responsive: true,
+          plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } },
+          scales: {
+            x: { stacked: true, grid: { display: false }, ticks: { maxRotation: 30 } },
+            y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } },
+          },
+        },
+      });
+    },
   }));// ── Chat ─────────────────────────────────────────────────────────
   Alpine.data('chat', (projectId) => ({
     pid: projectId,
