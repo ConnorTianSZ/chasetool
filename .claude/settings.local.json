@@ -33,7 +33,13 @@
       "Bash(ls logs/)",
       "Bash(sqlite3 *)",
       "Bash(python3 *)",
-      "Bash(python *)"
+      "Bash(python *)",
+      "Bash(git checkout *)",
+      "Bash(git pull *)",
+      "Bash(git merge *)",
+      "Bash(git ls-tree *)",
+      "Bash(xargs -I{} sh -c 'echo \"--- {} ---\" && git show HEAD:{} 2>/dev/null | head -5')",
+      "Bash(git check-ignore *)"
     ]
   }
 }

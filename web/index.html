@@ -501,6 +501,7 @@
               <span>找到回邮：<strong x-text="pullStats.pulled"></strong> 封</span>
               <span style="color:#6b7280;">跳过无标记：<span x-text="pullStats.skipped_no_marker"></span> 封</span>
               <span style="color:#6b7280;">已存在：<span x-text="pullStats.skipped_duplicate"></span> 封</span>
+              <span x-show="pullStats.skipped_error" style="color:#dc2626;">读取失败：<span x-text="pullStats.skipped_error"></span> 封</span>
               <span style="color:#6b7280;">查找范围：<span x-text="pullStats.pulled_days"></span> 天</span>
             </div>
           </template>

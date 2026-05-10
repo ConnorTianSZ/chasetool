@@ -11,6 +11,20 @@ logger = logging.getLogger("chasebase.outlook_inbox")
 _outlook_app = None
 
 
+def _looks_like_disconnected_com_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return (
+        "object is not connected" in text
+        or "not connected to the server" in text
+        or "-2147220995" in text
+    )
+
+
+def _reset_outlook_cache() -> None:
+    global _outlook_app
+    _outlook_app = None
+
+
 def _get_outlook():
     global _outlook_app
     if _outlook_app is None:
@@ -20,6 +34,29 @@ def _get_outlook():
         except Exception as e:
             raise RuntimeError("Cannot connect to Outlook: " + str(e)) from e
     return _outlook_app
+
+
+def _open_inbox_items():
+    last_error: Exception | None = None
+    for attempt in range(2):
+        try:
+            outlook = _get_outlook()
+            namespace = outlook.GetNamespace("MAPI")
+            inbox = namespace.GetDefaultFolder(6)
+            messages = inbox.Items
+            messages.Sort("[ReceivedTime]", True)
+            return messages
+        except Exception as exc:
+            last_error = exc
+            if attempt == 0 and _looks_like_disconnected_com_error(exc):
+                logger.warning(
+                    "pull_inbox: cached Outlook COM object disconnected; "
+                    "resetting and retrying once"
+                )
+                _reset_outlook_cache()
+                continue
+            raise
+    raise last_error  # type: ignore[misc]
 
 
 def pull_inbox(days: int = 14, project_id: str = "default") -> dict:
@@ -36,11 +73,7 @@ def pull_inbox(days: int = 14, project_id: str = "default") -> dict:
         "pull_inbox START: project_id=%r days=%d", project_id, days
     )
 
-    outlook   = _get_outlook()
-    namespace = outlook.GetNamespace("MAPI")
-    inbox     = namespace.GetDefaultFolder(6)
-    messages  = inbox.Items
-    messages.Sort("[ReceivedTime]", True)
+    messages = _open_inbox_items()
 
     conn  = get_connection(project_id)
     pulled            = 0   # 成功入库（有 marker）
@@ -58,8 +91,19 @@ def pull_inbox(days: int = 14, project_id: str = "default") -> dict:
         return dt
 
     try:
-        for msg in messages:
+        try:
+            message_count = int(messages.Count)
+        except Exception:
+            logger.exception(
+                "pull_inbox: cannot read Outlook inbox message count; "
+                "treating as skipped error"
+            )
+            skipped_error += 1
+            message_count = 0
+
+        for msg_index in range(1, message_count + 1):
             try:
+                msg = messages.Item(msg_index)
                 received = msg.ReceivedTime
                 recv_dt = received if isinstance(received, datetime) \
                     else datetime.fromtimestamp(float(received))

@@ -396,7 +396,8 @@ document.addEventListener('alpine:init', () => {
         else if (this.pullDays) p.set('days', this.pullDays);
         const r = await api('POST', this.purl('/inbox/pull?') + p);
         this.pullStats = r;
-        toast(`查找完成：找到 ${r.pulled} 封回邮`, r.pulled > 0 ? 'success' : 'info');
+        const skipped = r.skipped_error || 0;
+        toast(`查找完成：找到 ${r.pulled} 封回邮${skipped ? `，${skipped} 封读取失败已跳过` : ''}`, skipped ? 'info' : (r.pulled > 0 ? 'success' : 'info'));
         this.load();
       } catch (e) { toast(e.message, 'error'); }
       finally { this.pulling = false; }
