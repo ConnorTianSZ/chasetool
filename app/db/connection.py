@@ -98,6 +98,8 @@ _MIGRATION_STMTS = [
     "ALTER TABLE inbound_emails ADD COLUMN reject_target_eta TEXT",
     "ALTER TABLE inbound_emails ADD COLUMN reject_sent_at DATETIME",
     "ALTER TABLE inbound_emails ADD COLUMN reject_mode TEXT",
+    # Phase 6: 存储发件人显示名（Outlook SenderName）
+    "ALTER TABLE inbound_emails ADD COLUMN from_name TEXT",
 ]
 
 _PROJECT_SETTINGS_SQL = """

@@ -239,35 +239,48 @@ def apply_inbound_decision(
                 # No edits → apply all not-yet-applied items
                 selected_list = [it for it in full_items if not it.get("_applied")]
 
-            # key: (po_number_upper, item_no_upper) → selected item data
-            to_apply_map: dict[tuple, dict] = {}
+            # Two lookup structures:
+            # 1. key_map: (po_upper, item_upper) → selected item  (for normal rows with PO/Item)
+            # 2. manual_queue: ordered list of manually-added rows with empty PO+Item
+            key_map: dict[tuple, dict] = {}
+            manual_queue: list[dict] = []
             for it in selected_list:
-                key = (
-                    str(it.get("po_number") or "").strip().upper(),
-                    str(it.get("item_no")   or "").strip().upper(),
-                )
-                to_apply_map[key] = it
+                po  = str(it.get("po_number") or "").strip().upper()
+                ino = str(it.get("item_no")   or "").strip().upper()
+                if not po and not ino:
+                    # Manually-added row with no identifiers — process by position
+                    manual_queue.append(it)
+                else:
+                    key_map[(po, ino)] = it
 
-            if not to_apply_map:
+            if not key_map and not manual_queue:
                 return {"ok": False, "reason": "No items selected; please check at least one row"}
 
             now_iso    = datetime.utcnow().isoformat(timespec="seconds")
             source_ref = row["outlook_entry_id"]
             applied, unmatched = [], []
+            _manual_idx = 0  # pointer into manual_queue
 
             for i, full_item in enumerate(full_items):
                 if full_item.get("_applied"):
                     continue  # Already done in a previous round
 
-                key = (
-                    str(full_item.get("po_number") or "").strip().upper(),
-                    str(full_item.get("item_no")   or "").strip().upper(),
-                )
-                if key not in to_apply_map:
-                    continue  # Not selected this round — leave for later
+                po  = str(full_item.get("po_number") or "").strip().upper()
+                ino = str(full_item.get("item_no")   or "").strip().upper()
+
+                if not po and not ino:
+                    # Manual row: consume from queue in order
+                    if _manual_idx >= len(manual_queue):
+                        continue  # No more manual items selected this round
+                    sel = manual_queue[_manual_idx]
+                    _manual_idx += 1
+                else:
+                    key = (po, ino)
+                    if key not in key_map:
+                        continue  # Not selected this round — leave for later
+                    sel = key_map[key]
 
                 # Merge user-edited fields (new_eta, remarks) from the selected version
-                sel = to_apply_map[key]
                 item_to_process = {
                     **full_item,
                     **{k: v for k, v in sel.items() if k in ("new_eta", "remarks", "matched")},
@@ -278,7 +291,51 @@ def apply_inbound_decision(
                     full_items[i] = {**full_items[i], "_applied": True}
                     applied.append(result)
                 else:
+                    # For manual rows with remarks/eta even if unmatched, still mark as applied
+                    # so they don't block the email from completing
+                    if full_item.get("_manual") and (sel.get("new_eta") or sel.get("remarks")):
+                        full_items[i] = {**full_items[i], "_applied": True}
                     unmatched.append(result)
+
+            # ── Process any manual rows from edits that were NOT in full_items ──
+            # (manually-added rows only exist in frontend memory until first submit)
+            remaining_manual = manual_queue[_manual_idx:]  # unconsumed manual items
+            for sel in remaining_manual:
+                # Also process keyed items from edits not found in full_items (new manual rows)
+                pass  # already handled below via direct-process path
+
+            # Direct-process: edits items flagged _manual that couldn't be matched
+            # to any full_item row (e.g. when llm_extracted_json was empty)
+            if edits and "items" in edits:
+                processed_keys: set = set()
+                for fi in full_items:
+                    if fi.get("_applied"):
+                        k = (str(fi.get("po_number") or "").strip().upper(),
+                             str(fi.get("item_no")   or "").strip().upper())
+                        processed_keys.add(k)
+
+                for sel in edits["items"]:
+                    if not sel.get("_manual"):
+                        continue
+                    po  = str(sel.get("po_number") or "").strip().upper()
+                    ino = str(sel.get("item_no")   or "").strip().upper()
+                    if (po, ino) in processed_keys:
+                        continue  # already handled above
+                    # This manual item was not in full_items at all — process it directly
+                    result = _apply_single_item(conn, sel, source_ref, now_iso)
+                    new_entry = {
+                        "po_number": sel.get("po_number", ""),
+                        "item_no":   sel.get("item_no", ""),
+                        "new_eta":   sel.get("new_eta", ""),
+                        "remarks":   sel.get("remarks", ""),
+                        "_manual":   True,
+                        "_applied":  result["status"] == "applied" or bool(sel.get("new_eta") or sel.get("remarks")),
+                    }
+                    full_items.append(new_entry)
+                    if result["status"] == "applied":
+                        applied.append(result)
+                    else:
+                        unmatched.append(result)
 
             # Write back full items list with _applied markers
             extracted["items"] = full_items

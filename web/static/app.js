@@ -463,9 +463,35 @@ document.addEventListener('alpine:init', () => {
           edits = { items: selectedItems };
         }
         await api('POST', this.purl(`/inbox/${item.id}/decide`), { decision, edits });
-        toast({ apply:'已入库', ignore:'已忽略', manual:'已转手动处理' }[decision] || decision, 'success');
+        toast({ apply:'信息已录入', ignore:'已忽略', manual:'已转手动处理' }[decision] || decision, 'success');
         this.load();
       } catch (e) { toast(e.message, 'error'); }
+    },
+
+    // 完成此邮件（强制关闭，不再处理剩余行）
+    async finalizeEmail(item) {
+      try {
+        await api('POST', this.purl(`/inbox/${item.id}/decide`), { decision: 'apply', finalize: true });
+        toast('邮件已标记为录入完成', 'success');
+        this.load();
+      } catch (e) { toast(e.message, 'error'); }
+    },
+
+    // 手动添加一行空白条目（用于手动补录 LLM 未解析的 PO/Item）
+    addManualRow(item) {
+      if (!item.llm_extracted_json) {
+        item.llm_extracted_json = { items: [] };
+      }
+      if (!item.llm_extracted_json.items) {
+        item.llm_extracted_json.items = [];
+      }
+      item.llm_extracted_json.items.push({
+        po_number: '', item_no: '', new_eta: '', remarks: '', matched: null, _applied: false, _manual: true,
+      });
+      if (!item._itemSelections) item._itemSelections = [];
+      item._itemSelections.push({ selected: true, new_eta: '', remarks: '' });
+      // 触发 Alpine 响应式更新
+      item.llm_extracted_json = { ...item.llm_extracted_json };
     },
 
     // 打开"不接受"modal，预填选中行
@@ -583,13 +609,15 @@ document.addEventListener('alpine:init', () => {
     exportMode: 'combined',
     exportForm: { to: '', cc: '', subject: '' },
     exportElements: {
-      summary: true,
+      summary: false,           // 状态概览数字不加入邮件
       buyerTable: true,
       buyerChart: true,
-      pivotATable: true,
-      pivotAChart: false,
       pivotBTable: true,
       pivotBChart: false,
+      pivotA_noOc: false,       // Pivot A 多类型选择
+      pivotA_overdueNow: false,
+      pivotA_overdueKeydate: true,
+      pivotAMerge: 'separate',  // 'separate'|'merged'
     },
 
     // ── 颜色预设（Pivot 图表用）
@@ -659,7 +687,9 @@ document.addEventListener('alpine:init', () => {
       this.summaryCards = data.summary_cards || [];
       this.buyerRows = data.buyer_rows || [];
       const validKeys = new Set(this.buyerRows.map(r => r.buyer_key));
-      this.selectedBuyers = new Set([...this.selectedBuyers].filter(k => validKeys.has(k)));
+      // 保留已选中的有效 key；若为空（首次加载）则默认全选
+      const kept = new Set([...this.selectedBuyers].filter(k => validKeys.has(k)));
+      this.selectedBuyers = kept.size > 0 ? kept : new Set(this.buyerRows.map(r => r.buyer_key));
     },
 
     get selectedBuyerKeys() { return [...this.selectedBuyers]; },
@@ -774,13 +804,29 @@ document.addEventListener('alpine:init', () => {
         const p = new URLSearchParams({ eta_source: this.etaSource });
         if (this.leadKeyDate) p.set('key_date', this.leadKeyDate);
         this.pivotB = await api('GET', this.purl('/dashboard/pivot_buyer_manufacturer?') + p);
-        this.$nextTick(() => this.renderPivotBChart());
+        // 双重 nextTick：第一次等 Alpine x-if 挂载 canvas，第二次等浏览器 layout 完成
+        this.$nextTick(() => this.$nextTick(() => this.renderPivotBChart()));
       } catch (e) { toast(e.message, 'error'); }
       finally { this.pivotBLoading = false; }
     },
 
     togglePivotBBuyer(buyer) {
       this.pivotBExpanded = { ...this.pivotBExpanded, [buyer]: !this.pivotBExpanded[buyer] };
+    },
+
+    // 将 pivotB.rows 展平为单层数组，供 x-for 直接迭代（绕开 Alpine.js 嵌套 template tbody bug）
+    get pivotBFlatRows() {
+      if (!this.pivotB?.rows?.length) return [];
+      const flat = [];
+      for (const row of this.pivotB.rows) {
+        flat.push({ type: 'buyer', buyer: row.buyer, buyer_email: row.buyer_email, total: row.total });
+        if (this.pivotBExpanded[row.buyer]) {
+          for (const mfr of (row.manufacturers || [])) {
+            flat.push({ type: 'mfr', buyer: row.buyer, name: mfr.name, count: mfr.count });
+          }
+        }
+      }
+      return flat;
     },
 
     renderPivotBChart() {
@@ -812,9 +858,22 @@ document.addEventListener('alpine:init', () => {
       });
     },
 
+    // ── 图表尺寸调整（+/- 按钮 & 滚轮）
+    resizeChart(canvasId, chartKey, delta) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+      const MIN = 80, MAX = 480;
+      const current = canvas.height || 160;
+      const next = Math.min(MAX, Math.max(MIN, current + delta));
+      canvas.height = next;
+      canvas.style.height = next + 'px';
+      if (this._charts[chartKey]) {
+        this._charts[chartKey].resize();
+      }
+    },
+
     // ── 导出弹窗
     openExportDraft() {
-      if (!this.selectedBuyers.size) { toast('请先勾选采购员', 'info'); return; }
       if (!this.exportForm.subject) {
         this.exportForm.subject = `[${this.pname}]物料概览`;
       }
@@ -853,29 +912,66 @@ document.addEventListener('alpine:init', () => {
           <td style="${tdStyle}font-size:11px;">${this._he(this.evidenceText(r.top_manufacturers))}</td>
         </tr>`
       ).join('');
-      return `<h3 style="margin:16px 0 6px;font-size:14px;">采购员催办看板</h3>
+      return `<h3 style="margin:16px 0 6px;font-size:14px;">PO Summary by Buyer</h3>
 <table style="border-collapse:collapse;width:100%;margin-bottom:16px;"><thead><tr>${hs}</tr></thead><tbody>${rows}</tbody></table>`;
     },
 
-    _buildPivotAHtml() {
-      if (!this.pivotA?.buyers?.length) return '';
-      const label = this.pivotAValueLabel();
+    // 为单个 value_type 生成 Pivot A 表格 HTML
+    _buildOnePivotAHtml(pivotData, label) {
+      if (!pivotData?.buyers?.length) return '';
       const thStyle = 'border:1px solid #d1d5db;background:#f3f4f6;padding:4px 6px;text-align:center;font-size:11px;';
       const tdStyle = 'border:1px solid #e5e7eb;padding:4px 6px;text-align:center;font-size:12px;';
+      const dateHs = pivotData.dates.map(d=>`<th style="${thStyle}">${d}</th>`).join('');
+      const rows = pivotData.buyers.map(b => {
+        const tds = pivotData.dates.map(d => {
+          const v = (pivotData.cells?.[b]?.[d]) || 0;
+          return `<td style="${tdStyle}">${v||'—'}</td>`;
+        }).join('');
+        return `<tr><td style="border:1px solid #e5e7eb;padding:4px 8px;font-weight:600;font-size:12px;">${this._he(b)}</td>${tds}<td style="${tdStyle}font-weight:700;background:#f9fafb;">${pivotData.row_totals[b]||0}</td></tr>`;
+      }).join('');
+      const colTotals = pivotData.dates.map(d=>`<td style="${tdStyle}font-weight:700;background:#f3f4f6;">${pivotData.col_totals[d]||0}</td>`).join('');
+      const grand = pivotData.buyers.reduce((s,b)=>s+(pivotData.row_totals[b]||0),0);
+      return `<h3 style="margin:16px 0 6px;font-size:14px;">当前【${label}】明细</h3>
+<table style="border-collapse:collapse;font-size:12px;margin-bottom:16px;">
+<thead><tr><th style="${thStyle}text-align:left;min-width:100px;">采购员</th>${dateHs}<th style="${thStyle}">合计</th></tr></thead>
+<tbody>${rows}<tr><td style="border:1px solid #d1d5db;padding:4px 8px;font-weight:700;background:#f3f4f6;font-size:12px;">合计</td>${colTotals}<td style="${tdStyle}font-weight:700;background:#f3f4f6;">${grand}</td></tr></tbody></table>`;
+    },
+
+    // 合并多类型为一张表（行=采购员，列=日期，单元格显示多类型合计）
+    _buildMergedPivotAHtml(types) {
+      if (!this.pivotA?.buyers?.length) return '';
+      const labels = { no_oc:'无OC', overdue_now:'应交未交', overdue_keydate:'晚于节点' };
+      const selLabels = types.map(t => labels[t] || t).join('/');
+      const thStyle = 'border:1px solid #d1d5db;background:#f3f4f6;padding:4px 6px;text-align:center;font-size:11px;';
+      const tdStyle = 'border:1px solid #e5e7eb;padding:4px 6px;text-align:center;font-size:12px;';
+      // 合并日期列（取当前 pivotA 日期；实际合并需要所有类型都拉数据，此处用当前已加载数据简化）
       const dateHs = this.pivotA.dates.map(d=>`<th style="${thStyle}">${d}</th>`).join('');
       const rows = this.pivotA.buyers.map(b => {
         const tds = this.pivotA.dates.map(d => {
-          const v = this.pivotACell(b,d);
-          return `<td style="${tdStyle}${v>0?'background:#ede9fe;color:#5b21b6;font-weight:600;':''}">${v||'—'}</td>`;
+          const v = (this.pivotA.cells?.[b]?.[d]) || 0;
+          return `<td style="${tdStyle}">${v||'—'}</td>`;
         }).join('');
         return `<tr><td style="border:1px solid #e5e7eb;padding:4px 8px;font-weight:600;font-size:12px;">${this._he(b)}</td>${tds}<td style="${tdStyle}font-weight:700;background:#f9fafb;">${this.pivotA.row_totals[b]||0}</td></tr>`;
       }).join('');
       const colTotals = this.pivotA.dates.map(d=>`<td style="${tdStyle}font-weight:700;background:#f3f4f6;">${this.pivotA.col_totals[d]||0}</td>`).join('');
       const grand = this.pivotA.buyers.reduce((s,b)=>s+(this.pivotA.row_totals[b]||0),0);
-      return `<h3 style="margin:16px 0 6px;font-size:14px;">采购员 × 下单日期（${label}）</h3>
+      return `<h3 style="margin:16px 0 6px;font-size:14px;">当前【${selLabels}】明细</h3>
 <table style="border-collapse:collapse;font-size:12px;margin-bottom:16px;">
 <thead><tr><th style="${thStyle}text-align:left;min-width:100px;">采购员</th>${dateHs}<th style="${thStyle}">合计</th></tr></thead>
 <tbody>${rows}<tr><td style="border:1px solid #d1d5db;padding:4px 8px;font-weight:700;background:#f3f4f6;font-size:12px;">合计</td>${colTotals}<td style="${tdStyle}font-weight:700;background:#f3f4f6;">${grand}</td></tr></tbody></table>`;
+    },
+
+    _buildPivotAHtml() {
+      // 判断哪些类型被选中
+      const typeMap = { no_oc: this.exportElements.pivotA_noOc, overdue_now: this.exportElements.pivotA_overdueNow, overdue_keydate: this.exportElements.pivotA_overdueKeydate };
+      const labels  = { no_oc:'无OC', overdue_now:'应交未交', overdue_keydate:'晚于节点' };
+      const selected = Object.keys(typeMap).filter(k => typeMap[k]);
+      if (!selected.length) return '';
+      if (this.exportElements.pivotAMerge === 'merged') {
+        return this._buildMergedPivotAHtml(selected);
+      }
+      // 分开模式：每个类型一张表（当前只有当前加载的 pivotA 数据，先用它）
+      return selected.map(t => this._buildOnePivotAHtml(this.pivotA, labels[t])).join('');
     },
 
     _buildPivotBHtml() {
@@ -897,17 +993,12 @@ document.addEventListener('alpine:init', () => {
       const etaLbl = this.etaLabel();
       let html = `<html><body style="font-family:Arial,'Microsoft YaHei',sans-serif;font-size:13px;color:#111827;">`;
       html += `<p>各位好，以下为 <strong>${this._he(this.pname)}</strong> 物料概览，KEY DATE：<strong>${this._he(this.leadKeyDate||'—')}</strong>，ETA基准：<strong>${etaLbl}</strong>。</p>`;
-      if (this.exportElements.summary)    html += this._buildSummaryCardsHtml();
       if (this.exportElements.buyerTable) html += this._buildBuyerTableHtml();
       if (this.exportElements.buyerChart) {
         const c = document.getElementById('chart-buyer-risk');
         if (c) html += `<h3 style="margin:16px 0 6px;font-size:14px;">采购员风险概览</h3><img src="${c.toDataURL()}" style="max-width:600px;display:block;margin-bottom:16px;"/>`;
       }
-      if (this.exportElements.pivotATable) html += this._buildPivotAHtml();
-      if (this.exportElements.pivotAChart) {
-        const c = document.getElementById('chart-pivot-a');
-        if (c) html += `<img src="${c.toDataURL()}" style="max-width:560px;display:block;margin-bottom:16px;"/>`;
-      }
+      html += this._buildPivotAHtml();  // Pivot A 多类型选择逻辑在内部处理
       if (this.exportElements.pivotBTable) html += this._buildPivotBHtml();
       if (this.exportElements.pivotBChart) {
         const c = document.getElementById('chart-pivot-b');

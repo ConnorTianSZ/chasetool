@@ -462,8 +462,8 @@
             <option value="">全部</option>
             <option value="new">未解析</option>
             <option value="pending_confirm">待确认</option>
-            <option value="partial">部分入库</option>
-            <option value="applied">已入库</option>
+            <option value="partial">部分录入</option>
+            <option value="applied">已录入</option>
             <option value="ignored">已忽略</option>
             <option value="manual">手动处理</option>
             <option value="rejected">不接受</option>
@@ -526,12 +526,13 @@
           <template x-for="item in items" :key="item.id">
             <div class="inbox-card">
               <div class="inbox-card-header">
-                <span style="font-weight:600;" x-text="item.from_address"></span>
-                <span style="color:#888;margin-left:8px;font-size:12px;" x-text="(item.received_at||'').slice(0,16)"></span>
-                <span style="flex:1;margin:0 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;" x-text="item.subject"></span>
+                <!-- 采购员 · Marker · 日期时间 · 状态 -->
+                <span style="font-weight:600;color:#1e40af;" x-text="item.buyer_display || '—'"></span>
                 <template x-if="item.parsed_marker">
-                  <span class="badge badge-open" x-text="item.parsed_marker" style="margin-right:6px;font-size:10px;"></span>
+                  <span class="badge badge-open" x-text="item.parsed_marker" style="margin:0 6px;font-size:10px;"></span>
                 </template>
+                <span style="color:#888;font-size:12px;" x-text="(item.received_at||'').slice(0,16).replace('T',' ')"></span>
+                <span style="flex:1;"></span>
                 <span class="badge"
                   :class="{
                     'badge-open':      item.status==='new',
@@ -541,7 +542,14 @@
                     'badge-overdue-keydate': item.status==='rejected',
                     'badge-cancelled': item.status==='ignored'||item.status==='manual'||item.status==='escalate'
                   }"
-                  x-text="{new:'未解析',pending_confirm:'待确认',partial:'部分入库',applied:'已入库',ignored:'已忽略',manual:'手动处理',rejected:'已回复不接受'}[item.status]||item.status"></span>
+                  x-text="{new:'未解析',pending_confirm:'待确认',partial:'部分录入',applied:'已录入',ignored:'已忽略',manual:'手动处理',rejected:'已回复不接受'}[item.status]||item.status"></span>
+              </div>
+              <!-- 供应商来信摘要（主题 + 发件人显示名） -->
+              <div style="padding:4px 16px 0;font-size:12px;color:#6b7280;border-bottom:1px solid #f3f4f6;">
+                <span x-text="item.subject"></span>
+                <span style="margin-left:8px;color:#9ca3af;">· From:
+                  <span x-text="item.from_name || item.from_address || '—'"></span>
+                </span>
               </div>
 
               <div class="inbox-card-body">
@@ -577,7 +585,7 @@
                               <tr :class="ei._applied ? 'row-applied' : (item._itemSelections?.[idx]?.selected===false ? 'row-deselected' : '')">
                                 <td style="text-align:center;">
                                   <template x-if="ei._applied">
-                                    <span title="已入库" style="color:#16a34a;font-weight:600;">✓</span>
+                                    <span title="已录入" style="color:#16a34a;font-weight:600;">✓</span>
                                   </template>
                                   <template x-if="!ei._applied">
                                     <input type="checkbox"
@@ -585,8 +593,30 @@
                                       @change="if(item._itemSelections?.[idx]) item._itemSelections[idx].selected = $event.target.checked" />
                                   </template>
                                 </td>
-                                <td x-text="ei.po_number||'—'"></td>
-                                <td x-text="ei.item_no||'—'"></td>
+                                <!-- PO号：手动新增行可直接编辑 -->
+                                <td>
+                                  <template x-if="ei._applied || !ei._manual">
+                                    <span x-text="ei.po_number||'—'" style="font-size:12px;"></span>
+                                  </template>
+                                  <template x-if="!ei._applied && ei._manual">
+                                    <input type="text" class="inline-input"
+                                      :value="ei.po_number"
+                                      @input="ei.po_number = $event.target.value"
+                                      placeholder="PO号" style="width:90px;" />
+                                  </template>
+                                </td>
+                                <!-- 行号：手动新增行可直接编辑 -->
+                                <td>
+                                  <template x-if="ei._applied || !ei._manual">
+                                    <span x-text="ei.item_no||'—'" style="font-size:12px;"></span>
+                                  </template>
+                                  <template x-if="!ei._applied && ei._manual">
+                                    <input type="text" class="inline-input"
+                                      :value="ei.item_no"
+                                      @input="ei.item_no = $event.target.value"
+                                      placeholder="行号" style="width:60px;" />
+                                  </template>
+                                </td>
                                 <td>
                                   <template x-if="ei._applied">
                                     <span x-text="ei.new_eta||'—'" style="color:#6b7280;font-size:12px;"></span>
@@ -614,7 +644,7 @@
                                 <td x-text="ei.matched?.current_eta||'—'"></td>
                                 <td>
                                   <template x-if="ei._applied">
-                                    <span class="badge badge-sm badge-delivered">已入库</span>
+                                    <span class="badge badge-sm badge-delivered">已录入</span>
                                   </template>
                                   <template x-if="!ei._applied && ei.matched">
                                     <span class="badge badge-sm"
@@ -629,7 +659,7 @@
                                       x-text="ei.matched.state_label"></span>
                                   </template>
                                   <template x-if="!ei._applied && !ei.matched">
-                                    <span class="badge badge-sm badge-cancelled">未匹配</span>
+                                    <span class="badge badge-sm badge-cancelled" x-text="ei._manual ? '手动录入' : '未匹配'"></span>
                                   </template>
                                 </td>
                               </tr>
@@ -637,27 +667,44 @@
                           </tbody>
                         </table>
                       </div>
+                      <!-- 手动新增行入口（手动处理状态或待确认/部分录入时显示） -->
+                      <div x-show="item.status==='manual' || item.status==='pending_confirm' || item.status==='partial'"
+                           style="margin-top:6px;">
+                        <button class="btn btn-outline btn-sm" style="font-size:12px;"
+                          @click="addManualRow(item)">＋ 新增一行</button>
+                      </div>
                     </div>
                   </template>
                   <template x-if="!item.llm_extracted_json">
-                    <div style="color:#9ca3af;font-size:12px;padding:10px 0;">点击「🤖 解析」提取交期信息</div>
+                    <div style="padding:10px 0;">
+                      <div style="color:#9ca3af;font-size:12px;margin-bottom:6px;">
+                        点击「🤖 解析」提取交期信息，或点击「＋ 新增一行」手动录入
+                      </div>
+                      <div x-show="item.status==='manual' || item.status==='pending_confirm'">
+                        <button class="btn btn-outline btn-sm" style="font-size:12px;"
+                          @click="addManualRow(item)">＋ 新增一行</button>
+                      </div>
+                    </div>
                   </template>
                 </div>
               </div>
 
               <div class="inbox-card-footer">
+                <!-- 解析：未解析/待确认/手动处理 均可触发（允许重新解析） -->
                 <button class="btn btn-outline btn-sm" @click="parse(item)"
-                  x-show="item.status==='new' || item.status==='pending_confirm'">🤖 解析</button>
+                  x-show="item.status==='new' || item.status==='pending_confirm' || item.status==='manual'">🤖 解析</button>
+                <!-- 信息录入：待确认/部分录入/手动处理 均可提交 -->
                 <button class="btn btn-success btn-sm" @click="decide(item,'apply')"
-                  x-show="item.status==='pending_confirm' || item.status==='partial'">✅ 入库选中行</button>
+                  x-show="item.status==='pending_confirm' || item.status==='partial' || item.status==='manual'">✅ 信息录入</button>
                 <button class="btn btn-outline btn-sm" @click="decide(item,'ignore')"
                   x-show="item.status==='pending_confirm'">🚫 忽略</button>
                 <button class="btn btn-danger btn-sm" @click="decide(item,'manual')"
                   x-show="item.status==='pending_confirm'">📋 转手动</button>
                 <button class="btn btn-sm" style="background:#fef3c7;color:#b45309;border:1px solid #fcd34d;" @click="openReject(item)"
                   x-show="item.status==='pending_confirm' || item.status==='partial'">❌ 不接受</button>
+                <!-- 完成此邮件：部分录入/手动处理 均可强制关闭 -->
                 <button class="btn btn-sm" style="background:#d1fae5;color:#065f46;border:1px solid #6ee7b7;" @click="finalizeEmail(item)"
-                  x-show="item.status==='partial'">🏁 完成此邮件</button>
+                  x-show="item.status==='partial' || item.status==='manual'">🏁 完成此邮件</button>
               </div>
             </div>
           </template>
@@ -809,11 +856,16 @@
           <div class="card" style="margin-bottom:16px;" x-show="buyerRows.length>0">
             <div class="card-header">
               <h3>采购员风险概览</h3>
-              <button class="btn btn-outline btn-sm" @click="riskChartCollapsed=!riskChartCollapsed"
-                x-text="riskChartCollapsed ? '▶ 展开' : '▼ 收起'"></button>
+              <div style="display:flex;gap:6px;align-items:center;">
+                <button class="btn btn-outline btn-sm" style="width:26px;padding:0;" title="缩小" @click="resizeChart('chart-buyer-risk','buyerRisk',-40)">−</button>
+                <button class="btn btn-outline btn-sm" style="width:26px;padding:0;" title="放大" @click="resizeChart('chart-buyer-risk','buyerRisk',40)">＋</button>
+                <button class="btn btn-outline btn-sm" @click="riskChartCollapsed=!riskChartCollapsed"
+                  x-text="riskChartCollapsed ? '▶ 展开' : '▼ 收起'"></button>
+              </div>
             </div>
             <div x-show="!riskChartCollapsed">
-              <div class="card-body" style="padding:12px;">
+              <div class="card-body" style="padding:12px;"
+                   @wheel.prevent="resizeChart('chart-buyer-risk','buyerRisk',$event.deltaY<0?40:-40)">
                 <canvas id="chart-buyer-risk" height="140"></canvas>
               </div>
             </div>
@@ -822,7 +874,7 @@
           <!-- ── 采购员催办看板 ── -->
           <div class="card" style="margin-bottom:16px;">
             <div class="card-header">
-              <h3>采购员催办看板</h3>
+              <h3>PO Summary by Buyer</h3>
               <div style="display:flex;gap:8px;align-items:center;">
                 <button class="btn btn-outline btn-sm" @click="loadLeadBuyer();$nextTick(()=>renderBuyerRiskChart())">刷新</button>
                 <button class="btn btn-outline btn-sm" @click="buyerTableCollapsed=!buyerTableCollapsed"
@@ -879,7 +931,7 @@
           <!-- ── Pivot A：Buyer × Doc.Date × Value ── -->
           <div class="card" style="margin-bottom:16px;">
             <div class="card-header">
-              <h3>采购员 × 下单日期 透视表</h3>
+              <h3>采购员【<span x-text="pivotAValueLabel()"></span>】日期明细</h3>
               <div style="display:flex;gap:6px;align-items:center;">
                 <div class="segmented">
                   <button :class="{active:pivotAValueType==='no_oc'}"           @click="setPivotAValueType('no_oc')">无OC</button>
@@ -896,8 +948,15 @@
                 <div x-show="pivotALoading" style="text-align:center;padding:20px;color:#888;">加载中…</div>
                 <template x-if="!pivotALoading && pivotA">
                   <div>
-                    <div style="margin-bottom:16px;max-height:200px;">
-                      <canvas id="chart-pivot-a" height="160"></canvas>
+                    <div style="margin-bottom:16px;display:flex;align-items:flex-start;gap:6px;">
+                      <div style="flex:1;overflow:hidden;"
+                           @wheel.prevent="resizeChart('chart-pivot-a','pivotA',$event.deltaY<0?40:-40)">
+                        <canvas id="chart-pivot-a" height="160"></canvas>
+                      </div>
+                      <div style="display:flex;flex-direction:column;gap:4px;padding-top:4px;">
+                        <button class="btn btn-outline btn-sm" style="width:26px;padding:0;" title="放大" @click="resizeChart('chart-pivot-a','pivotA',40)">＋</button>
+                        <button class="btn btn-outline btn-sm" style="width:26px;padding:0;" title="缩小" @click="resizeChart('chart-pivot-a','pivotA',-40)">−</button>
+                      </div>
                     </div>
                     <div class="table-wrap" style="max-height:420px;overflow:auto;">
                       <table style="font-size:12px;white-space:nowrap;">
@@ -916,9 +975,7 @@
                               <td style="position:sticky;left:0;background:#fff;font-weight:600;z-index:1;" x-text="buyer"></td>
                               <template x-for="dt in pivotA.dates" :key="dt">
                                 <td style="text-align:center;">
-                                  <span x-show="pivotACell(buyer,dt)>0"
-                                    style="display:inline-block;min-width:24px;padding:2px 4px;border-radius:3px;background:#ede9fe;color:#5b21b6;font-weight:600;"
-                                    x-text="pivotACell(buyer,dt)"></span>
+                                  <span x-show="pivotACell(buyer,dt)>0" x-text="pivotACell(buyer,dt)"></span>
                                   <span x-show="pivotACell(buyer,dt)===0" style="color:#d1d5db;">—</span>
                                 </td>
                               </template>
@@ -955,50 +1012,57 @@
             <div x-show="!pivotBCollapsed">
               <div class="card-body" style="padding:12px;">
                 <div x-show="pivotBLoading" style="text-align:center;padding:20px;color:#888;">加载中…</div>
-                <template x-if="!pivotBLoading && pivotB">
-                  <div>
-                    <div style="margin-bottom:16px;max-height:220px;">
+                <!-- canvas 始终保留在 DOM，仅用 x-show 控制可见性，确保 Chart.js 能找到元素 -->
+                <div x-show="!pivotBLoading && pivotB">
+                  <div style="margin-bottom:16px;display:flex;align-items:flex-start;gap:6px;">
+                    <div style="flex:1;overflow:hidden;"
+                         @wheel.prevent="resizeChart('chart-pivot-b','pivotB',$event.deltaY<0?40:-40)">
                       <canvas id="chart-pivot-b" height="180"></canvas>
                     </div>
-                    <div class="table-wrap">
-                      <table style="font-size:13px;">
-                        <thead>
-                          <tr>
-                            <th style="min-width:160px;">采购员 / 制造商</th>
-                            <th style="text-align:center;width:80px;">晚于节点</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <template x-for="row in pivotB.rows" :key="row.buyer">
-                            <tr style="background:#f9fafb;cursor:pointer;" @click="togglePivotBBuyer(row.buyer)">
-                              <td style="font-weight:700;padding-left:8px;">
-                                <span x-text="pivotBExpanded[row.buyer] ? '▼ ' : '▶ '"></span>
-                                <span x-text="row.buyer"></span>
-                                <span style="font-size:11px;color:#6b7280;margin-left:4px;"
-                                  x-text="row.buyer_email ? '('+row.buyer_email+')' : ''"></span>
-                              </td>
-                              <td style="text-align:center;font-weight:700;color:#7c3aed;" x-text="row.total"></td>
-                            </tr>
-                            <template x-if="pivotBExpanded[row.buyer]">
-                              <template x-for="mfr in row.manufacturers" :key="mfr.name">
-                                <tr>
-                                  <td style="padding-left:32px;color:#374151;">
-                                    <span style="color:#9ca3af;margin-right:4px;">└</span>
-                                    <span x-text="mfr.name"></span>
-                                  </td>
-                                  <td style="text-align:center;" x-text="mfr.count"></td>
-                                </tr>
-                              </template>
-                            </template>
-                          </template>
-                          <template x-if="!pivotB.rows.length">
-                            <tr><td colspan="2" class="empty">暂无晚于节点物料</td></tr>
-                          </template>
-                        </tbody>
-                      </table>
+                    <div style="display:flex;flex-direction:column;gap:4px;padding-top:4px;">
+                      <button class="btn btn-outline btn-sm" style="width:26px;padding:0;" title="放大" @click="resizeChart('chart-pivot-b','pivotB',40)">＋</button>
+                      <button class="btn btn-outline btn-sm" style="width:26px;padding:0;" title="缩小" @click="resizeChart('chart-pivot-b','pivotB',-40)">−</button>
                     </div>
                   </div>
-                </template>
+                  <div class="table-wrap">
+                    <table style="font-size:13px;">
+                      <thead>
+                        <tr>
+                          <th style="min-width:160px;">采购员 / 制造商</th>
+                          <th style="text-align:center;width:80px;">晚于节点</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <!-- 使用扁平数组 pivotBFlatRows 避免 Alpine.js 嵌套 template tbody 渲染 bug -->
+                        <template x-for="row in pivotBFlatRows" :key="(row.type==='buyer'?'b:':('m:'+row.buyer+':'))+row.buyer+(row.name||'')">
+                          <!-- 采购员行 -->
+                          <tr x-show="row.type==='buyer'"
+                              style="background:#f9fafb;cursor:pointer;"
+                              @click="togglePivotBBuyer(row.buyer)">
+                            <td style="font-weight:700;padding-left:8px;">
+                              <span x-text="pivotBExpanded[row.buyer] ? '▼ ' : '▶ '"></span>
+                              <span x-text="row.buyer"></span>
+                              <span style="font-size:11px;color:#6b7280;margin-left:4px;"
+                                x-text="row.buyer_email ? '('+row.buyer_email+')' : ''"></span>
+                            </td>
+                            <td style="text-align:center;font-weight:700;color:#7c3aed;" x-text="row.total"></td>
+                          </tr>
+                          <!-- 制造商子行 -->
+                          <tr x-show="row.type==='mfr'">
+                            <td style="padding-left:32px;color:#374151;">
+                              <span style="color:#9ca3af;margin-right:4px;">└</span>
+                              <span x-text="row.name"></span>
+                            </td>
+                            <td style="text-align:center;" x-text="row.count"></td>
+                          </tr>
+                        </template>
+                        <tr x-show="!pivotBLoading && pivotB && !pivotB.rows.length">
+                          <td colspan="2" class="empty">暂无晚于节点物料</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -1044,13 +1108,24 @@
                   <div>
                     <div class="field-label" style="margin-bottom:8px;">邮件正文内容（选择要加入的要素）</div>
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 24px;">
-                      <label class="check-label"><input type="checkbox" x-model="exportElements.summary" /> 状态概览数字</label>
-                      <label class="check-label"><input type="checkbox" x-model="exportElements.buyerTable" /> 采购员催办看板（表格）</label>
+                      <label class="check-label"><input type="checkbox" x-model="exportElements.buyerTable" /> PO Summary by Buyer（表格）</label>
                       <label class="check-label"><input type="checkbox" x-model="exportElements.buyerChart" /> 采购员风险概览（图表）</label>
-                      <label class="check-label"><input type="checkbox" x-model="exportElements.pivotATable" /> 采购员×下单日期透视表</label>
-                      <label class="check-label"><input type="checkbox" x-model="exportElements.pivotAChart" /> 透视表柱状图</label>
                       <label class="check-label"><input type="checkbox" x-model="exportElements.pivotBTable" /> 制造商晚于节点明细（表格）</label>
                       <label class="check-label"><input type="checkbox" x-model="exportElements.pivotBChart" /> 制造商晚于节点（图表）</label>
+                      <div style="grid-column:1/-1;border-top:1px solid #e5e7eb;padding-top:8px;margin-top:4px;">
+                        <div style="font-size:12px;color:#374151;font-weight:600;margin-bottom:6px;">采购员日期明细（可多选类型）</div>
+                        <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:6px;">
+                          <label class="check-label"><input type="checkbox" x-model="exportElements.pivotA_noOc" /> 无OC</label>
+                          <label class="check-label"><input type="checkbox" x-model="exportElements.pivotA_overdueNow" /> 应交未交</label>
+                          <label class="check-label"><input type="checkbox" x-model="exportElements.pivotA_overdueKeydate" /> 晚于节点</label>
+                        </div>
+                        <div x-show="exportElements.pivotA_noOc||exportElements.pivotA_overdueNow||exportElements.pivotA_overdueKeydate"
+                             style="display:flex;align-items:center;gap:12px;font-size:12px;color:#6b7280;">
+                          <span>加入方式：</span>
+                          <label class="check-label"><input type="radio" x-model="exportElements.pivotAMerge" value="separate" /> 分开表格</label>
+                          <label class="check-label"><input type="radio" x-model="exportElements.pivotAMerge" value="merged" /> 合并一表</label>
+                        </div>
+                      </div>
                     </div>
                   </div>
 
