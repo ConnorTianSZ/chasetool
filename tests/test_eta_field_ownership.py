@@ -1,8 +1,10 @@
 import sqlite3
 import unittest
+from datetime import date
 from pathlib import Path
 
 from app.db import connection
+from app.update_policy import bulk_update_fields
 from app.tools import parse_inbound
 from app.tools import update_material
 
@@ -91,3 +93,21 @@ class EtaFieldOwnershipTest(unittest.TestCase):
         self.assertEqual(row["current_eta"], "2026-06-10")
         self.assertEqual(row["supplier_eta"], "2026-05-21")
 
+    def test_date_values_are_serialized_before_writing_history(self):
+        result = bulk_update_fields(
+            self.conn,
+            1,
+            {"supplier_eta": date(2026, 5, 22)},
+            source="buyer_manual",
+        )
+
+        row = self.conn.execute(
+            "SELECT supplier_eta FROM materials WHERE id=1"
+        ).fetchone()
+        history = self.conn.execute(
+            "SELECT new_value FROM field_updates WHERE material_id=1 AND field_name='supplier_eta'"
+        ).fetchone()
+
+        self.assertEqual(result["supplier_eta"], (True, "ok"))
+        self.assertEqual(row["supplier_eta"], "2026-05-22")
+        self.assertEqual(history["new_value"], "2026-05-22")

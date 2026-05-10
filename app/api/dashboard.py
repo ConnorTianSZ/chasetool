@@ -299,9 +299,12 @@ def lead_buyer(
     project_id: str = FPath(...),
     key_date: str | None = Query(None),
     eta_source: str = Query("current_eta"),
+    evidence_by: str = Query("manufacturer"),
 ):
     if eta_source not in {"current_eta", "supplier_eta"}:
         eta_source = "current_eta"
+    if evidence_by not in {"supplier", "manufacturer"}:
+        evidence_by = "manufacturer"
 
     materials, effective_key_date = _load_enriched_materials(project_id, key_date, eta_source)
     buyer_map: dict[str, dict] = {}
@@ -314,6 +317,7 @@ def lead_buyer(
         "focus": 0,
     }
     global_manufacturers: Counter = Counter()
+    late_evidence: Counter = Counter()
 
     for item in materials:
         if not _is_open_material(item):
@@ -350,6 +354,8 @@ def lead_buyer(
         elif state == "overdue_keydate":
             buyer["overdue_keydate_count"] += 1
             summary["overdue_keydate"] += 1
+            evidence_name = item.get(evidence_by) if evidence_by == "supplier" else item.get("manufacturer")
+            late_evidence[_display_name(evidence_name, "unknown")] += 1
         elif state == "eta_mismatch":
             buyer["eta_mismatch_count"] += 1
             summary["eta_mismatch"] += 1
@@ -362,14 +368,18 @@ def lead_buyer(
             summary["focus"] += 1
 
         if _is_risk_material(item):
+            supplier = _display_name(item.get("supplier"), "unknown supplier")
             manufacturer = _display_name(item.get("manufacturer"), "未知制造商")
+            buyer["_suppliers"][supplier] += 1
             buyer["_manufacturers"][manufacturer] += 1
             global_manufacturers[manufacturer] += 1
 
     buyer_rows = []
     for buyer in buyer_map.values():
         row = dict(buyer)
+        suppliers = row.pop("_suppliers")
         manufacturers = row.pop("_manufacturers")
+        row["top_suppliers"] = _counter_top(suppliers, limit=3)
         row["top_manufacturers"] = _counter_top(manufacturers, limit=3)
         buyer_rows.append(row)
 
@@ -396,6 +406,7 @@ def lead_buyer(
         "key_date": effective_key_date,
         "summary_cards": cards,
         "buyer_rows": buyer_rows,
+        "late_evidence": _counter_top(late_evidence, limit=10),
         "top_manufacturers": _counter_top(global_manufacturers, limit=10),
         "config": {"eta_source": eta_source},
     }
@@ -728,16 +739,16 @@ def pivot_buyer_manufacturer(
         buyer_key_val = item.get("buyer_key") or ("name:" + buyer.lower())
         mfr = _display_name(item.get("manufacturer"), "未知制造商")
 
-        if buyer not in buyer_map:
-            buyer_map[buyer] = {
+        if buyer_key_val not in buyer_map:
+            buyer_map[buyer_key_val] = {
                 "buyer": buyer,
                 "buyer_key": buyer_key_val,
                 "buyer_email": buyer_email,
                 "total": 0,
                 "_mfr": Counter(),
             }
-        buyer_map[buyer]["total"] += 1
-        buyer_map[buyer]["_mfr"][mfr] += 1
+        buyer_map[buyer_key_val]["total"] += 1
+        buyer_map[buyer_key_val]["_mfr"][mfr] += 1
 
     result = []
     for entry in buyer_map.values():

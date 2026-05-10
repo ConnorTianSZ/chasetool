@@ -7,12 +7,13 @@ import io
 import json
 import re
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 import unicodedata
 
 import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 import pandas as pd
 import yaml
 
@@ -28,6 +29,20 @@ _DATE_FIELDS = {
     "supplier_eta",
     "statical_delivery_date",
 }
+
+_CHASE_UPDATE_FIELDS = {
+    "supplier_eta",
+    "supplier_remarks",
+    "status",
+    "urgent_feedback_eta",
+    "urgent_feedback_note",
+    "is_focus",
+    "focus_reason",
+    "escalation_flag",
+}
+
+_CHASE_UPDATE_DATE_FIELDS = {"supplier_eta", "urgent_feedback_eta"}
+_CHASE_UPDATE_BOOL_FIELDS = {"is_focus", "escalation_flag"}
 
 
 def _load_mapping() -> dict[str, list[str]]:
@@ -228,6 +243,198 @@ def import_excel(file_path: str | Path, project_id: str = "default") -> dict:
     }
 
 
+def _load_chase_update_mapping() -> dict[str, list[str]]:
+    mapping = {field: list(aliases or []) for field, aliases in _load_mapping().items()}
+    mapping.setdefault("supplier_eta", []).extend([
+        "Supplier Reply ETA",
+        "Supplier Feedback ETA",
+        "Chase ETA",
+        "供应商回复交期",
+        "供应商反馈交期",
+        "催货后交期",
+        "催货交期",
+    ])
+    mapping.setdefault("supplier_remarks", []).extend([
+        "Supplier Reply Remarks",
+        "Supplier Feedback Remarks",
+        "Chase Remarks",
+        "供应商回复备注",
+        "供应商反馈备注",
+        "催货备注",
+        "反馈备注",
+    ])
+    mapping.setdefault("status", []).extend([
+        "Chase Status",
+        "催货状态",
+    ])
+    mapping.setdefault("urgent_feedback_eta", []).extend([
+        "Urgent Feedback ETA",
+        "Urgent Chase ETA",
+        "加急反馈交期",
+        "加急催货交期",
+    ])
+    mapping.setdefault("urgent_feedback_note", []).extend([
+        "Urgent Feedback Note",
+        "Urgent Chase Note",
+        "加急反馈备注",
+        "加急催货备注",
+    ])
+    mapping.setdefault("is_focus", []).extend([
+        "Focus",
+        "Is Focus",
+        "重点关注",
+    ])
+    mapping.setdefault("focus_reason", []).extend([
+        "Focus Reason",
+        "重点关注原因",
+    ])
+    mapping.setdefault("escalation_flag", []).extend([
+        "Escalation",
+        "Escalation Flag",
+        "升级",
+        "升级标记",
+    ])
+    return mapping
+
+
+def _parse_bool_value(value: str) -> bool | None:
+    text = str(value or "").strip().lower()
+    if text in {"1", "true", "yes", "y", "是", "有", "重点", "x"}:
+        return True
+    if text in {"0", "false", "no", "n", "否", "无"}:
+        return False
+    return None
+
+
+def _find_material_id(conn: sqlite3.Connection, po: str, item: str) -> int | None:
+    row = conn.execute(
+        "SELECT id FROM materials WHERE po_number=? AND item_no=?",
+        (po, item),
+    ).fetchone()
+    if row:
+        return row[0]
+    row = conn.execute(
+        "SELECT id FROM materials WHERE CAST(po_number AS INTEGER)=CAST(? AS INTEGER) AND item_no=?",
+        (po, item),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def import_chase_updates(
+    file_path: str | Path,
+    project_id: str = "default",
+    source: str = "buyer_manual",
+) -> dict:
+    """Batch-update post-chase feedback fields by PO + Item.
+
+    This does not create materials and never updates SAP-owned current_eta.
+    """
+    path = Path(file_path)
+    if not _is_excel(path.name):
+        raise ValueError("Only .xlsx / .xls files are supported")
+
+    df = pd.read_excel(path, dtype=str, keep_default_na=False)
+    df.columns = [str(c).strip() for c in df.columns]
+    header_map = _build_header_map(list(df.columns), _load_chase_update_mapping())
+
+    po_col = next((c for c, f in header_map.items() if f == "po_number"), None)
+    item_col = next((c for c, f in header_map.items() if f == "item_no"), None)
+    if not po_col or not item_col:
+        raise ValueError("Cannot find PO / Item columns in update file")
+
+    rows_updated = 0
+    rows_skipped = 0
+    fields_updated = 0
+    errors: list[dict] = []
+
+    conn = get_connection(project_id)
+    try:
+        for idx, row in df.iterrows():
+            raw = dict(row)
+            po = str(raw.get(po_col, "")).strip()
+            item = str(raw.get(item_col, "")).strip()
+            row_no = int(idx) + 2
+            if not po or not item:
+                rows_skipped += 1
+                errors.append({"row": row_no, "reason": "missing PO or item number"})
+                continue
+
+            mat_id = _find_material_id(conn, po, item)
+            if not mat_id:
+                rows_skipped += 1
+                errors.append({"row": row_no, "reason": f"material not found for PO={po} item={item}"})
+                continue
+
+            updates: dict[str, Any] = {}
+            row_errors: list[str] = []
+            for col, val in raw.items():
+                field = header_map.get(col)
+                if field not in _CHASE_UPDATE_FIELDS:
+                    continue
+                val_str = str(val).strip()
+                if not val_str or val_str.lower() in {"nan", "nat", "none", "null"}:
+                    continue
+                if field in _CHASE_UPDATE_DATE_FIELDS:
+                    cleaned = clean_date_value(val_str)
+                    if not cleaned:
+                        row_errors.append(f"{col}: invalid date")
+                        continue
+                    updates[field] = cleaned
+                elif field in _CHASE_UPDATE_BOOL_FIELDS:
+                    parsed_bool = _parse_bool_value(val_str)
+                    if parsed_bool is None:
+                        row_errors.append(f"{col}: invalid boolean")
+                        continue
+                    updates[field] = parsed_bool
+                else:
+                    updates[field] = val_str
+
+            if not updates:
+                rows_skipped += 1
+                reason = "no update fields found"
+                if row_errors:
+                    reason += "; " + "; ".join(row_errors)
+                errors.append({"row": row_no, "reason": reason})
+                continue
+
+            results = bulk_update_fields(conn, mat_id, updates, source=source, source_ref=str(path))
+            ok_fields = [field for field, (ok, _) in results.items() if ok]
+            if ok_fields:
+                rows_updated += 1
+                fields_updated += len(ok_fields)
+            blocked = [f"{field}: {reason}" for field, (ok, reason) in results.items() if not ok]
+            if row_errors or blocked:
+                errors.append({"row": row_no, "reason": "; ".join([*row_errors, *blocked])})
+            if not ok_fields:
+                rows_skipped += 1
+
+        conn.execute(
+            "INSERT INTO imports "
+            "(file_path, file_hash, rows_added, rows_updated, rows_skipped, errors_json, imported_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(path),
+                _file_hash(path),
+                0,
+                rows_updated,
+                rows_skipped,
+                json.dumps(errors, ensure_ascii=False),
+                datetime.now().isoformat(sep=" ", timespec="seconds"),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {
+        "rows_added": 0,
+        "rows_updated": rows_updated,
+        "rows_skipped": rows_skipped,
+        "fields_updated": fields_updated,
+        "errors": errors,
+    }
+
+
 def export_back(
     source_path: Path,
     dest_path: Path | None = None,
@@ -300,19 +507,22 @@ _FULL_EXPORT_COLUMNS: list[tuple[str, str]] = [
     ("Position Text1",                             "position_text1"),
     ("Position Text2",                             "position_text2"),
     # ── 催货附加字段 ──
-    ("供应商回复交期",                              "supplier_eta"),
-    ("催货状态",                                    "status"),
-    ("催货次数",                                    "chase_count"),
-    ("最后催货时间",                                "last_chased_at"),
-    ("供应商回复备注",                              "supplier_remarks"),
+    ("Supplier Reply ETA",                         "supplier_eta"),
+    ("Chase Status",                               "status"),
+    ("Chase Count",                                "chase_count"),
+    ("Last Chase Date",                            "last_chased_at"),
+    ("Supplier Reply Remarks",                     "supplier_remarks"),
 ]
 
 # 重点行样式
 _FOCUS_FILL = PatternFill(fill_type="solid", fgColor="FFF3C6")   # 浅黄底
 
-# 表头样式
-_HEADER_FILL = PatternFill(fill_type="solid", fgColor="D9E1F2")  # 淡蓝底
-_HEADER_FONT = Font(bold=True)
+# 表头样式（与 SAP 导出格式一致）
+_HEADER_FILL     = PatternFill(fill_type="solid", fgColor="C0C0C0")   # 灰底
+_HEADER_FONT     = Font(name="Arial", size=10, bold=False)
+_HEADER_ALIGN    = Alignment(vertical="top")
+_THIN_SIDE       = Side(style="thin")
+_HEADER_BORDER   = Border(left=_THIN_SIDE, right=_THIN_SIDE, top=_THIN_SIDE, bottom=_THIN_SIDE)
 
 
 def _apply_focus_row(ws, row_idx: int, max_col: int) -> None:
@@ -351,7 +561,8 @@ def export_full_db(project_id: str = "default") -> bytes:
         cell = ws.cell(1, col_idx, header)
         cell.font = _HEADER_FONT
         cell.fill = _HEADER_FILL
-        cell.alignment = Alignment(horizontal="center")
+        cell.alignment = _HEADER_ALIGN
+        cell.border = _HEADER_BORDER
 
     # 写数据
     for row_idx, row in enumerate(rows, 2):
@@ -374,11 +585,11 @@ def export_full_db(project_id: str = "default") -> bytes:
 
 # ── 追加催货字段列定义（用于 export_chase_append）────────────────────────────
 _CHASE_APPEND_COLUMNS: list[tuple[str, str]] = [
-    ("供应商回复交期",  "supplier_eta"),
-    ("催货状态",        "status"),
-    ("催货次数",        "chase_count"),
-    ("最后催货时间",    "last_chased_at"),
-    ("供应商回复备注",  "supplier_remarks"),
+    ("Supplier Reply ETA",      "supplier_eta"),
+    ("Chase Status",            "status"),
+    ("Chase Count",             "chase_count"),
+    ("Last Chase Date",         "last_chased_at"),
+    ("Supplier Reply Remarks",  "supplier_remarks"),
 ]
 
 
@@ -423,7 +634,8 @@ def export_chase_append(
         cell = ws.cell(1, col_idx, header)
         cell.font = _HEADER_FONT
         cell.fill = _HEADER_FILL
-        cell.alignment = Alignment(horizontal="center")
+        cell.alignment = _HEADER_ALIGN
+        cell.border = _HEADER_BORDER
 
     # ── 从数据库批量读取所有物料的催货数据 ──
     conn = get_connection(project_id)

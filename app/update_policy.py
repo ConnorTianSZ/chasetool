@@ -1,6 +1,7 @@
 """Field update priority governance"""
 import sqlite3
 import json
+from datetime import date, datetime
 from typing import Any
 
 SOURCE_PRIORITY: dict[str, int] = {
@@ -32,6 +33,14 @@ FACT_FIELDS = {
 }
 
 _SOURCE_COLUMNS = {"current_eta_source", "supplier_eta_source", "supplier_remarks_source"}
+
+
+def _normalize_storage_value(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return value
 
 
 def _get_priority(source: str) -> int:
@@ -72,12 +81,13 @@ def try_update_field(
                 f"(priority={_get_priority(source)})"
             )
 
-    new_str = json.dumps(new_value, ensure_ascii=False) if not isinstance(new_value, str) else new_value
+    stored_value = _normalize_storage_value(new_value)
+    new_str = json.dumps(stored_value, ensure_ascii=False) if not isinstance(stored_value, str) else stored_value
     old_str = json.dumps(old_value, ensure_ascii=False) if not isinstance(old_value, str) else (old_value or "")
 
     conn.execute(
         f"UPDATE materials SET {field_name} = ? WHERE id = ?",
-        (new_value, material_id),
+        (stored_value, material_id),
     )
 
     if src_col:

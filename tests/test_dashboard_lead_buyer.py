@@ -154,6 +154,35 @@ class DashboardLeadBuyerTest(unittest.TestCase):
         )
         self.assertEqual(by_manufacturer["late_evidence"], [{"name": "Maker X", "count": 2}])
 
+    def test_pivot_buyer_manufacturer_keeps_same_display_name_buyers_separate(self):
+        today = date.today()
+        key_date = (today + timedelta(days=2)).isoformat()
+        self._insert_material(
+            item_no="10",
+            buyer_name="Alex",
+            buyer_email="alex.one@example.com",
+            current_eta=(today + timedelta(days=5)).isoformat(),
+            manufacturer="Maker A",
+        )
+        self._insert_material(
+            item_no="20",
+            buyer_name="Alex",
+            buyer_email="alex.two@example.com",
+            current_eta=(today + timedelta(days=5)).isoformat(),
+            manufacturer="Maker B",
+        )
+
+        result = dashboard_api.pivot_buyer_manufacturer(
+            project_id=self.project_id,
+            key_date=key_date,
+        )
+
+        self.assertEqual(len(result["rows"]), 2)
+        self.assertEqual(
+            {row["buyer_key"] for row in result["rows"]},
+            {"email:alex.one@example.com", "email:alex.two@example.com"},
+        )
+
 
 class OutlookDisplayDraftTest(unittest.TestCase):
     def test_create_display_draft_saves_and_displays_mail(self):

@@ -6,7 +6,14 @@ from fastapi.responses import Response
 import shutil, tempfile, os
 from datetime import datetime
 
-from app.services.excel_io import import_excel, export_back, export_full_db, export_chase_append, _is_excel
+from app.services.excel_io import (
+    import_excel,
+    import_chase_updates,
+    export_back,
+    export_full_db,
+    export_chase_append,
+    _is_excel,
+)
 from app.db.connection import get_connection
 
 router = APIRouter(prefix="/api/projects/{project_id}/imports", tags=["imports"])
@@ -27,6 +34,29 @@ async def upload_excel(
 
     try:
         result = import_excel(tmp_path, project_id=project_id)
+    finally:
+        os.unlink(tmp_path)
+
+    return result
+
+
+@router.post("/upload_chase_updates")
+async def upload_chase_updates(
+    project_id: str = FPath(...),
+    file: UploadFile = File(...),
+):
+    if not _is_excel(file.filename or ""):
+        raise HTTPException(400, "Only .xlsx / .xls files are supported")
+
+    suffix = Path(file.filename).suffix
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        tmp_path = tmp.name
+
+    try:
+        result = import_chase_updates(tmp_path, project_id=project_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     finally:
         os.unlink(tmp_path)
 

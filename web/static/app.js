@@ -613,7 +613,6 @@ document.addEventListener('alpine:init', () => {
       buyerTable: true,
       buyerChart: true,
       pivotBTable: true,
-      pivotBChart: false,
       pivotA_noOc: false,       // Pivot A 多类型选择
       pivotA_overdueNow: false,
       pivotA_overdueKeydate: true,
@@ -742,6 +741,7 @@ document.addEventListener('alpine:init', () => {
         options: {
           animation: { duration: 0 },
           responsive: true,
+          maintainAspectRatio: false,
           plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } } },
           scales: {
             x: { grid: { display: false }, ticks: { maxRotation: 30 } },
@@ -791,6 +791,7 @@ document.addEventListener('alpine:init', () => {
           animation: { duration: 0 },
           indexAxis: 'y',
           responsive: true,
+          maintainAspectRatio: false,
           plugins: { legend: { display: false } },
           scales: { x: { beginAtZero: true, ticks: { stepSize: 1 } }, y: { grid: { display: false } } },
         },
@@ -804,8 +805,6 @@ document.addEventListener('alpine:init', () => {
         const p = new URLSearchParams({ eta_source: this.etaSource });
         if (this.leadKeyDate) p.set('key_date', this.leadKeyDate);
         this.pivotB = await api('GET', this.purl('/dashboard/pivot_buyer_manufacturer?') + p);
-        // 双重 nextTick：第一次等 Alpine x-if 挂载 canvas，第二次等浏览器 layout 完成
-        this.$nextTick(() => this.$nextTick(() => this.renderPivotBChart()));
       } catch (e) { toast(e.message, 'error'); }
       finally { this.pivotBLoading = false; }
     },
@@ -819,43 +818,15 @@ document.addEventListener('alpine:init', () => {
       if (!this.pivotB?.rows?.length) return [];
       const flat = [];
       for (const row of this.pivotB.rows) {
-        flat.push({ type: 'buyer', buyer: row.buyer, buyer_email: row.buyer_email, total: row.total });
-        if (this.pivotBExpanded[row.buyer]) {
+        const key = row.buyer_key || row.buyer;
+        flat.push({ type: 'buyer', buyer_key: key, buyer: row.buyer, buyer_email: row.buyer_email, total: row.total });
+        if (this.pivotBExpanded[key]) {
           for (const mfr of (row.manufacturers || [])) {
-            flat.push({ type: 'mfr', buyer: row.buyer, name: mfr.name, count: mfr.count });
+            flat.push({ type: 'mfr', buyer_key: key, buyer: row.buyer, name: mfr.name, count: mfr.count });
           }
         }
       }
       return flat;
-    },
-
-    renderPivotBChart() {
-      const ctx = document.getElementById('chart-pivot-b');
-      if (!ctx || !this.pivotB?.rows?.length) return;
-      if (this._charts.pivotB) { this._charts.pivotB.destroy(); this._charts.pivotB = null; }
-      const rows = this.pivotB.rows.slice(0, 12);
-      const mfrTotals = {};
-      rows.forEach(r => r.manufacturers.forEach(m => { mfrTotals[m.name] = (mfrTotals[m.name]||0) + m.count; }));
-      const topMfrs = Object.entries(mfrTotals).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([n])=>n);
-      const datasets = topMfrs.map((mfr, i) => ({
-        label: mfr,
-        data: rows.map(r => r.manufacturers.find(m=>m.name===mfr)?.count || 0),
-        backgroundColor: this.colorPresets[i % this.colorPresets.length],
-        stack: 'mfr',
-      }));
-      this._charts.pivotB = new Chart(ctx, {
-        type: 'bar',
-        data: { labels: rows.map(r => r.buyer), datasets },
-        options: {
-          animation: { duration: 0 },
-          responsive: true,
-          plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } },
-          scales: {
-            x: { stacked: true, grid: { display: false }, ticks: { maxRotation: 30 } },
-            y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } },
-          },
-        },
-      });
     },
 
     // ── 图表尺寸调整（+/- 按钮 & 滚轮）
@@ -863,10 +834,12 @@ document.addEventListener('alpine:init', () => {
       const canvas = document.getElementById(canvasId);
       if (!canvas) return;
       const MIN = 80, MAX = 480;
-      const current = canvas.height || 160;
+      const frame = canvas.closest('[data-chart-resize]') || canvas.parentElement;
+      const current = parseInt(frame?.style?.height || '', 10) || canvas.clientHeight || canvas.height || 160;
       const next = Math.min(MAX, Math.max(MIN, current + delta));
+      if (frame) frame.style.height = next + 'px';
       canvas.height = next;
-      canvas.style.height = next + 'px';
+      canvas.style.height = '100%';
       if (this._charts[chartKey]) {
         this._charts[chartKey].resize();
       }
@@ -1000,10 +973,6 @@ document.addEventListener('alpine:init', () => {
       }
       html += this._buildPivotAHtml();  // Pivot A 多类型选择逻辑在内部处理
       if (this.exportElements.pivotBTable) html += this._buildPivotBHtml();
-      if (this.exportElements.pivotBChart) {
-        const c = document.getElementById('chart-pivot-b');
-        if (c) html += `<img src="${c.toDataURL()}" style="max-width:560px;display:block;margin-bottom:16px;"/>`;
-      }
       html += `<p style="color:#6b7280;font-size:12px;">— 由系统自动生成，请勿直接回复 —</p></body></html>`;
       return html;
     },
@@ -1076,6 +1045,8 @@ document.addEventListener('alpine:init', () => {
     pid: projectId,
     dragging: false, result: null, loading: false, history: [],
     exportChaseLoading: false,
+    chaseUpdateLoading: false,
+    chaseUpdateResult: null,
     purl(p) { return `/api/projects/${this.pid}${p}`; },
 
     // 最近一次导入的文件路径（从历史记录中取）
@@ -1107,6 +1078,27 @@ document.addEventListener('alpine:init', () => {
 
     onDrop(e)      { this.dragging = false; this.handleFile(e.dataTransfer.files[0]); },
     onFileInput(e) { this.handleFile(e.target.files[0]); },
+
+    async handleChaseUpdateFile(file) {
+      if (!file) return;
+      if (!file.name.match(/\.(xlsx|xls)$/i)) { toast('仅支持 .xlsx / .xls', 'error'); return; }
+      this.chaseUpdateLoading = true; this.chaseUpdateResult = null;
+      const fd = new FormData();
+      fd.append('file', file);
+      try {
+        const r = await fetch(this.purl('/imports/upload_chase_updates'), { method: 'POST', body: fd });
+        if (!r.ok) throw new Error((await r.json()).detail);
+        this.chaseUpdateResult = await r.json();
+        toast(`催货结果更新完成：更新 ${this.chaseUpdateResult.rows_updated} 行，跳过 ${this.chaseUpdateResult.rows_skipped} 行`, 'success');
+        this.loadHistory();
+      } catch (e) { toast(e.message, 'error'); }
+      finally { this.chaseUpdateLoading = false; }
+    },
+
+    onChaseUpdateFileInput(e) {
+      this.handleChaseUpdateFile(e.target.files[0]);
+      e.target.value = '';
+    },
 
     // 导出完整数据库（浏览器直接下载）
     async exportDb() {

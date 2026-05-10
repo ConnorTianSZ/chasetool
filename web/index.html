@@ -271,12 +271,9 @@
                     </template>
                   </td>
                   <td>
-                    <template x-if="item.display_urgent_feedback_eta">
-                      <span style="color:#d97706;font-weight:600;" x-text="item.display_urgent_feedback_eta"></span>
-                    </template>
-                    <template x-if="!item.display_urgent_feedback_eta">
-                      <span style="color:#d1d5db;">—</span>
-                    </template>
+                    <span x-show="item.display_urgent_feedback_eta" style="color:#d97706;font-weight:600;" x-text="item.display_urgent_feedback_eta"></span>
+                    <span x-show="!item.display_urgent_feedback_eta && item.display_supplier_eta" style="color:#d97706;font-weight:600;" x-text="item.display_supplier_eta"></span>
+                    <span x-show="!item.display_urgent_feedback_eta && !item.display_supplier_eta" style="color:#d1d5db;">—</span>
                   </td>
                   <td>
                     <span class="badge" :class="statusBadge(item)" x-text="item.material_state_label || item.status"></span>
@@ -864,9 +861,9 @@
               </div>
             </div>
             <div x-show="!riskChartCollapsed">
-              <div class="card-body" style="padding:12px;"
+              <div class="card-body" data-chart-resize style="padding:12px;height:180px;"
                    @wheel.prevent="resizeChart('chart-buyer-risk','buyerRisk',$event.deltaY<0?40:-40)">
-                <canvas id="chart-buyer-risk" height="140"></canvas>
+                <canvas id="chart-buyer-risk" height="180" style="height:100%;"></canvas>
               </div>
             </div>
           </div>
@@ -949,9 +946,9 @@
                 <template x-if="!pivotALoading && pivotA">
                   <div>
                     <div style="margin-bottom:16px;display:flex;align-items:flex-start;gap:6px;">
-                      <div style="flex:1;overflow:hidden;"
+                      <div data-chart-resize style="flex:1;overflow:hidden;height:220px;"
                            @wheel.prevent="resizeChart('chart-pivot-a','pivotA',$event.deltaY<0?40:-40)">
-                        <canvas id="chart-pivot-a" height="160"></canvas>
+                        <canvas id="chart-pivot-a" height="220" style="height:100%;"></canvas>
                       </div>
                       <div style="display:flex;flex-direction:column;gap:4px;padding-top:4px;">
                         <button class="btn btn-outline btn-sm" style="width:26px;padding:0;" title="放大" @click="resizeChart('chart-pivot-a','pivotA',40)">＋</button>
@@ -1012,18 +1009,7 @@
             <div x-show="!pivotBCollapsed">
               <div class="card-body" style="padding:12px;">
                 <div x-show="pivotBLoading" style="text-align:center;padding:20px;color:#888;">加载中…</div>
-                <!-- canvas 始终保留在 DOM，仅用 x-show 控制可见性，确保 Chart.js 能找到元素 -->
                 <div x-show="!pivotBLoading && pivotB">
-                  <div style="margin-bottom:16px;display:flex;align-items:flex-start;gap:6px;">
-                    <div style="flex:1;overflow:hidden;"
-                         @wheel.prevent="resizeChart('chart-pivot-b','pivotB',$event.deltaY<0?40:-40)">
-                      <canvas id="chart-pivot-b" height="180"></canvas>
-                    </div>
-                    <div style="display:flex;flex-direction:column;gap:4px;padding-top:4px;">
-                      <button class="btn btn-outline btn-sm" style="width:26px;padding:0;" title="放大" @click="resizeChart('chart-pivot-b','pivotB',40)">＋</button>
-                      <button class="btn btn-outline btn-sm" style="width:26px;padding:0;" title="缩小" @click="resizeChart('chart-pivot-b','pivotB',-40)">−</button>
-                    </div>
-                  </div>
                   <div class="table-wrap">
                     <table style="font-size:13px;">
                       <thead>
@@ -1034,26 +1020,18 @@
                       </thead>
                       <tbody>
                         <!-- 使用扁平数组 pivotBFlatRows 避免 Alpine.js 嵌套 template tbody 渲染 bug -->
-                        <template x-for="row in pivotBFlatRows" :key="(row.type==='buyer'?'b:':('m:'+row.buyer+':'))+row.buyer+(row.name||'')">
-                          <!-- 采购员行 -->
-                          <tr x-show="row.type==='buyer'"
-                              style="background:#f9fafb;cursor:pointer;"
-                              @click="togglePivotBBuyer(row.buyer)">
-                            <td style="font-weight:700;padding-left:8px;">
-                              <span x-text="pivotBExpanded[row.buyer] ? '▼ ' : '▶ '"></span>
-                              <span x-text="row.buyer"></span>
-                              <span style="font-size:11px;color:#6b7280;margin-left:4px;"
-                                x-text="row.buyer_email ? '('+row.buyer_email+')' : ''"></span>
+                        <template x-for="row in pivotBFlatRows" :key="row.type + ':' + row.buyer_key + ':' + (row.name || '')">
+                          <tr :style="row.type==='buyer' ? 'background:#f9fafb;cursor:pointer;' : ''"
+                              @click="row.type==='buyer' && togglePivotBBuyer(row.buyer_key)">
+                            <td :style="row.type==='buyer' ? 'font-weight:700;padding-left:8px;' : 'padding-left:32px;color:#374151;'">
+                              <span x-show="row.type==='buyer'" x-text="pivotBExpanded[row.buyer_key] ? '▼ ' : '▶ '"></span>
+                              <span x-show="row.type==='mfr'" style="color:#9ca3af;margin-right:4px;">└</span>
+                              <span x-text="row.type==='buyer' ? row.buyer : row.name"></span>
+                              <span x-show="row.type==='buyer' && row.buyer_email" style="font-size:11px;color:#6b7280;margin-left:4px;"
+                                x-text="'(' + row.buyer_email + ')'"></span>
                             </td>
-                            <td style="text-align:center;font-weight:700;color:#7c3aed;" x-text="row.total"></td>
-                          </tr>
-                          <!-- 制造商子行 -->
-                          <tr x-show="row.type==='mfr'">
-                            <td style="padding-left:32px;color:#374151;">
-                              <span style="color:#9ca3af;margin-right:4px;">└</span>
-                              <span x-text="row.name"></span>
-                            </td>
-                            <td style="text-align:center;" x-text="row.count"></td>
+                            <td :style="row.type==='buyer' ? 'text-align:center;font-weight:700;color:#7c3aed;' : 'text-align:center;'"
+                              x-text="row.type==='buyer' ? row.total : row.count"></td>
                           </tr>
                         </template>
                         <tr x-show="!pivotBLoading && pivotB && !pivotB.rows.length">
@@ -1111,7 +1089,6 @@
                       <label class="check-label"><input type="checkbox" x-model="exportElements.buyerTable" /> PO Summary by Buyer（表格）</label>
                       <label class="check-label"><input type="checkbox" x-model="exportElements.buyerChart" /> 采购员风险概览（图表）</label>
                       <label class="check-label"><input type="checkbox" x-model="exportElements.pivotBTable" /> 制造商晚于节点明细（表格）</label>
-                      <label class="check-label"><input type="checkbox" x-model="exportElements.pivotBChart" /> 制造商晚于节点（图表）</label>
                       <div style="grid-column:1/-1;border-top:1px solid #e5e7eb;padding-top:8px;margin-top:4px;">
                         <div style="font-size:12px;color:#374151;font-weight:600;margin-bottom:6px;">采购员日期明细（可多选类型）</div>
                         <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:6px;">
@@ -1133,7 +1110,7 @@
                   <div style="font-size:12px;color:#6b7280;background:#f9fafb;padding:8px 10px;border-radius:5px;">
                     ETA基准：<strong x-text="etaLabel()"></strong>
                     &nbsp;·&nbsp;不会发送邮件，不增加催货次数
-                    <span x-show="exportElements.buyerChart||exportElements.pivotAChart||exportElements.pivotBChart">
+                    <span x-show="exportElements.buyerChart||exportElements.pivotAChart">
                       &nbsp;·&nbsp;图表将以图片形式嵌入正文
                     </span>
                   </div>
@@ -1240,6 +1217,46 @@
                           <thead><tr style="background:#fef2f2;"><th style="padding:5px 10px;">Excel行</th><th>原因</th></tr></thead>
                           <tbody>
                             <template x-for="err in result.errors" :key="err.row">
+                              <tr><td style="padding:3px 10px;" x-text="err.row"></td><td x-text="err.reason"></td></tr>
+                            </template>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <div class="card" style="margin-bottom:16px;">
+            <div class="card-header"><h3>批量更新催货结果</h3></div>
+            <div class="card-body">
+              <div class="upload-zone"
+                @click="$refs.chaseUpdateInput.click()"
+                style="padding:24px;"
+              >
+                <div style="font-size:28px;margin-bottom:6px;">📥</div>
+                <div>上传催货结果 Excel，按 PO + Item 更新供应商交期、remarks、状态等字段</div>
+                <div style="font-size:12px;color:#888;margin-top:4px;">不会新增物料，也不会覆盖 SAP Confirmed Del. Date</div>
+              </div>
+              <input type="file" x-ref="chaseUpdateInput" accept=".xlsx,.xls,.XLSX,.XLS" style="display:none;" @change="onChaseUpdateFileInput($event)" />
+              <div x-show="chaseUpdateLoading" style="margin-top:12px;text-align:center;color:#888;">更新中…</div>
+              <template x-if="chaseUpdateResult">
+                <div style="margin-top:16px;">
+                  <div class="stat-grid">
+                    <div class="stat-card primary"><div class="num" x-text="chaseUpdateResult.rows_updated"></div><div class="label">更新行</div></div>
+                    <div class="stat-card success"><div class="num" x-text="chaseUpdateResult.fields_updated"></div><div class="label">更新字段</div></div>
+                    <div class="stat-card warning"><div class="num" x-text="chaseUpdateResult.rows_skipped"></div><div class="label">跳过行</div></div>
+                  </div>
+                  <template x-if="chaseUpdateResult.errors && chaseUpdateResult.errors.length">
+                    <div style="margin-top:12px;">
+                      <div style="font-weight:600;font-size:13px;color:#dc2626;margin-bottom:6px;">未更新明细</div>
+                      <div style="border:1px solid #fecaca;border-radius:6px;overflow:auto;max-height:160px;">
+                        <table style="font-size:12px;width:100%;">
+                          <thead><tr style="background:#fef2f2;"><th style="padding:5px 10px;">Excel行</th><th>原因</th></tr></thead>
+                          <tbody>
+                            <template x-for="err in chaseUpdateResult.errors" :key="err.row + ':' + err.reason">
                               <tr><td style="padding:3px 10px;" x-text="err.row"></td><td x-text="err.reason"></td></tr>
                             </template>
                           </tbody>

@@ -184,7 +184,8 @@ def list_emails(
         ie_where = ("WHERE " + " AND ".join(f"ie.{c}" for c in conditions)) if conditions else ""
         rows = conn.execute(
             f"""SELECT ie.*,
-                       m.buyer_display, m.buyer_email AS mat_buyer_email
+                       COALESCE(NULLIF(m.buyer_name, ''), NULLIF(m.buyer_email, ''), '') AS buyer_display,
+                       m.buyer_email AS mat_buyer_email
                 FROM inbound_emails ie
                 LEFT JOIN materials m ON ie.matched_material_id = m.id
                 {ie_where}
