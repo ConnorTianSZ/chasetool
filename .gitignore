@@ -35,6 +35,9 @@ api.txt
 # Excel cache / temp
 *.tmp
 
+# history mail log
+history_mail.txt
+
 # Probe / test artifacts
 .probe-data/
 .test-data/

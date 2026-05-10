@@ -93,8 +93,9 @@ def pull_inbox(days: int = 14, project_id: str = "default") -> dict:
                     skipped_duplicate += 1
                     continue
 
-                body   = str(msg.Body or "")
-                sender = str(msg.SenderEmailAddress or "")
+                body        = str(msg.Body or "")
+                sender      = str(msg.SenderEmailAddress or "")
+                sender_name = str(msg.SenderName or "")
                 marker_str = marker.to_subject_tag()
 
                 # ── chase_log 反查关联 material_id ────────────────────────
@@ -153,10 +154,10 @@ def pull_inbox(days: int = 14, project_id: str = "default") -> dict:
 
                 conn.execute(
                     "INSERT INTO inbound_emails "
-                    "(outlook_entry_id, from_address, subject, body, received_at, "
+                    "(outlook_entry_id, from_address, from_name, subject, body, received_at, "
                     " parsed_marker, matched_material_id, status) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, 'new')",
-                    (entry_id, sender, subject, body,
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'new')",
+                    (entry_id, sender, sender_name, subject, body,
                      recv_dt.isoformat(), marker_str, mat_id),
                 )
                 logger.info(

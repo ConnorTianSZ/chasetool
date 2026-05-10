@@ -180,12 +180,20 @@ def list_emails(
             conditions.append("status=?")
             params.append(status)
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        # 构建 ie. 前缀的 WHERE（用于 JOIN 查询）
+        ie_where = ("WHERE " + " AND ".join(f"ie.{c}" for c in conditions)) if conditions else ""
         rows = conn.execute(
-            f"SELECT * FROM inbound_emails {where} "
-            f"ORDER BY received_at DESC LIMIT ? OFFSET ?",
+            f"""SELECT ie.*,
+                       m.buyer_display, m.buyer_email AS mat_buyer_email
+                FROM inbound_emails ie
+                LEFT JOIN materials m ON ie.matched_material_id = m.id
+                {ie_where}
+                ORDER BY ie.received_at DESC LIMIT ? OFFSET ?""",
             params + [limit, offset],
         ).fetchall()
-        total = conn.execute(f"SELECT COUNT(*) FROM inbound_emails {where}", params).fetchone()[0]
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM inbound_emails ie {ie_where}", params
+        ).fetchone()[0]
         return {"items": [dict(r) for r in rows], "total": total}
     finally:
         conn.close()
