@@ -141,17 +141,12 @@ def _call_openai_compat(system: str, user: str, model: str, max_tokens: int) -> 
     return resp.choices[0].message.content or ""
 
 
-def parse_email_for_eta(email_subject: str, email_body: str,
-                         email_date: date | None = None) -> dict:
+def parse_email_for_eta(email_subject: str, email_body: str) -> dict:
     """
     Extract structured delivery info from unstructured supplier reply emails.
 
     Handles Chinese informal text, relative dates (今天/明天), and general
     statements that apply to all items.
-
-    Args:
-        email_date: the date the email was received (used to resolve relative dates).
-                    If None, uses today's date.
 
     Returns:
       {
@@ -164,12 +159,12 @@ def parse_email_for_eta(email_subject: str, email_body: str,
       }
     """
     from datetime import date, timedelta
-    ref_date   = email_date or date.today()
-    today_str  = ref_date.isoformat()
-    tomorrow   = (ref_date + timedelta(days=1)).isoformat()
-    day_after  = (ref_date + timedelta(days=2)).isoformat()
-    today_mmdd = ref_date.strftime("%m/%d")
-    tmr_mmdd   = (ref_date + timedelta(days=1)).strftime("%m/%d")
+    today      = date.today()
+    today_str  = today.isoformat()
+    tomorrow   = (today + timedelta(days=1)).isoformat()
+    day_after  = (today + timedelta(days=2)).isoformat()
+    today_mmdd = today.strftime("%m/%d")
+    tmr_mmdd   = (today + timedelta(days=1)).strftime("%m/%d")
 
     sys_lines = [
         "You are a procurement assistant. Extract structured delivery information from supplier reply emails.",
