@@ -551,7 +551,12 @@
               </div>
 
               <div class="inbox-card-body">
-                <div class="inbox-email-panel" x-text="item.body"></div>
+                <template x-if="!_isHtml(item.body)">
+                  <div class="inbox-email-panel" x-text="item.body"></div>
+                </template>
+                <template x-if="_isHtml(item.body)">
+                  <iframe class="inbox-email-panel" :srcdoc="item.body" style="width:100%;border:none;height:400px;"></iframe>
+                </template>
                 <div class="inbox-parsed-panel">
                   <!-- ── 解析结果：逐行审批表 ── -->
                   <template x-if="item.llm_extracted_json">

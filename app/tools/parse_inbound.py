@@ -84,7 +84,16 @@ def parse_inbound_email(email_id: int, project_id: str = "default") -> dict:
         if not row:
             return {"ok": False, "reason": "email not found"}
 
-        extracted = parse_email_for_eta(row["subject"] or "", row["body"] or "")
+        # 用邮件接收日期作为相对日期参考，而非今天的日期
+        email_ref_date = None
+        if row.get("received_at"):
+            try:
+                email_ref_date = datetime.fromisoformat(row["received_at"]).date()
+            except Exception:
+                pass
+
+        extracted = parse_email_for_eta(row["subject"] or "", row["body"] or "",
+                                        email_date=email_ref_date)
 
         # Enrich each item with matched material info
         if extracted.get("items"):
