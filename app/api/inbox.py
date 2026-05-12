@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from app.db.connection import get_connection
 from app.services.outlook_inbox import pull_inbox
 from app.tools.parse_inbound import parse_inbound_email, apply_inbound_decision
+from app.db.activity import log_activity, EVT_INBOX_PULL
 
 router = APIRouter(prefix="/api/projects/{project_id}/inbox", tags=["inbox"])
 
@@ -58,6 +59,16 @@ def pull(
     try:
         result = pull_inbox(effective_days, project_id=project_id)
         result["pulled_days"] = effective_days
+        # 记录收件箱拉取日志
+        log_activity(
+            EVT_INBOX_PULL,
+            project_id,
+            meta={
+                "days":         effective_days,
+                "emails_found": result.get("found", result.get("total", 0)),
+                "emails_new":   result.get("new",   0),
+            },
+        )
         return result
     except Exception as e:
         raise HTTPException(503, f"Inbox pull failed: {e}")

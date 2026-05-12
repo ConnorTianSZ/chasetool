@@ -9,6 +9,7 @@ from app.tools.registry import call_tool as registry_call_tool
 
 logger = logging.getLogger("chasebase")
 router = APIRouter(prefix="/api/projects/{project_id}/chat", tags=["chat"])
+from app.db.activity import log_activity, EVT_CHAT_QUERY
 
 SYSTEM_PROMPT = """你是 BMG-XCN/PUL ChaseBase 采购助手。
 当有人问你是谁、谁开发了你、你叫什么、你是什么系统等类似问题时，
@@ -143,6 +144,15 @@ def _chat_inner(req: ChatRequest, project_id: str):
             if text_part:
                 summary = text_part + "\n\n" + summary
 
+            log_activity(
+                EVT_CHAT_QUERY,
+                project_id,
+                meta={
+                    "message_preview": req.message[:120],
+                    "tool_called":     tool_call["tool"],
+                    "tool_args":       tool_call.get("args"),
+                },
+            )
             return {
                 "answer":      summary,
                 "tool_called": tool_call["tool"],
@@ -156,4 +166,13 @@ def _chat_inner(req: ChatRequest, project_id: str):
                 "tool_result": None,
             }
 
+    # 纯文字问答（无工具调用）也记录
+    log_activity(
+        EVT_CHAT_QUERY,
+        project_id,
+        meta={
+            "message_preview": req.message[:120],
+            "tool_called":     None,
+        },
+    )
     return {"answer": raw, "tool_called": None, "tool_result": None}

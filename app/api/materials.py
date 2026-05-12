@@ -8,6 +8,10 @@ from app.db.connection import get_connection
 from app.models.material import MaterialUpdate
 from app.update_policy import bulk_update_fields, try_update_field
 from app.services.material_view import clean_date_value, enrich_material_row, load_pgr_map
+from app.db.activity import log_activity, EVT_ETA_MANUAL
+
+# 触发 eta_update_manual 日志的字段集合
+_ETA_FIELDS = {"supplier_eta", "urgent_feedback_eta", "current_eta", "supplier_remarks"}
 
 router = APIRouter(prefix="/api/projects/{project_id}/materials", tags=["materials"])
 
@@ -334,8 +338,36 @@ def update_material(
         return {"ok": True, "updated": 0}
     conn = get_connection(project_id)
     try:
+        # 抓取修改前的物料信息，用于日志 denormalize
+        mat_row = conn.execute(
+            "SELECT supplier, manufacturer, po_number, item_no FROM materials WHERE id=?",
+            (material_id,),
+        ).fetchone()
+        mat_info = dict(mat_row) if mat_row else {}
+
         results = bulk_update_fields(conn, material_id, updates, source=source)
         conn.commit()
+
+        # 记录交期/备注手工修改日志（只记录实际写入成功的 ETA 相关字段）
+        eta_fields_updated = {
+            f: v for f, v in updates.items()
+            if f in _ETA_FIELDS and results.get(f, (False, ""))[0]
+        }
+        if eta_fields_updated:
+            log_activity(
+                EVT_ETA_MANUAL,
+                project_id,
+                meta={
+                    "material_id":  material_id,
+                    "po_number":    mat_info.get("po_number"),
+                    "item_no":      mat_info.get("item_no"),
+                    "supplier":     mat_info.get("supplier"),
+                    "manufacturer": mat_info.get("manufacturer"),
+                    "source":       source,
+                    "fields":       eta_fields_updated,
+                },
+            )
+
         return {"ok": True, "results": {k: {"ok": ok, "reason": r} for k, (ok, r) in results.items()}}
     finally:
         conn.close()

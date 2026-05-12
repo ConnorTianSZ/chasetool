@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS project_settings (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- 时间节点表（Dashboard 交期预测用）
+-- time_nodes: Dashboard delivery forecast
 CREATE TABLE IF NOT EXISTS time_nodes (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     label       TEXT NOT NULL,
@@ -122,3 +122,50 @@ CREATE TABLE IF NOT EXISTS time_nodes (
     sort_order  INTEGER DEFAULT 0,
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+-- activity_log: one row per user action
+-- event_type values:
+--   startup           tool startup
+--   import_excel      SAP Excel upload
+--   eta_update_upload chase updates Excel upload (manual ETA replies)
+--   chase_draft       draft generated
+--   chase_sent        email sent / saved to Outlook drafts
+--   inbox_pull        inbox pull from Outlook
+--   chat_query        chat query (with or without tool call)
+--   eta_update_manual buyer manual ETA patch via API
+CREATE TABLE IF NOT EXISTS activity_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type  TEXT NOT NULL,
+    project_id  TEXT,
+    meta_json   TEXT,
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_act_event   ON activity_log(event_type);
+CREATE INDEX IF NOT EXISTS idx_act_project ON activity_log(project_id);
+CREATE INDEX IF NOT EXISTS idx_act_created ON activity_log(created_at);
+
+-- chase_material_log: one row per material per chase action
+-- supplier + manufacturer denormalized at write time for easy GROUP BY analytics
+-- used for: supplier chase frequency, urgency result tracking, supplier management
+CREATE TABLE IF NOT EXISTS chase_material_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    activity_log_id INTEGER REFERENCES activity_log(id),
+    project_id      TEXT,
+    event_type      TEXT NOT NULL,
+    material_id     INTEGER REFERENCES materials(id),
+    po_number       TEXT,
+    item_no         TEXT,
+    supplier        TEXT,
+    manufacturer    TEXT,
+    chase_type      TEXT,
+    to_address      TEXT,
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_cml_supplier     ON chase_material_log(supplier);
+CREATE INDEX IF NOT EXISTS idx_cml_manufacturer ON chase_material_log(manufacturer);
+CREATE INDEX IF NOT EXISTS idx_cml_event        ON chase_material_log(event_type);
+CREATE INDEX IF NOT EXISTS idx_cml_chase_type   ON chase_material_log(chase_type);
+CREATE INDEX IF NOT EXISTS idx_cml_project      ON chase_material_log(project_id);
+CREATE INDEX IF NOT EXISTS idx_cml_created      ON chase_material_log(created_at);

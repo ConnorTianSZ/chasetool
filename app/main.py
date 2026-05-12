@@ -29,6 +29,12 @@ load_dotenv(override=True)
 async def lifespan(app: FastAPI):
     init_db("default")
     setup_logging()
+    # 记录工具启动事件
+    try:
+        from app.db.activity import log_activity, EVT_STARTUP
+        log_activity(EVT_STARTUP, "default", meta={"version": "0.2.0"})
+    except Exception:
+        pass
     yield
 
 

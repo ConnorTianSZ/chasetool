@@ -861,7 +861,7 @@ document.addEventListener('alpine:init', () => {
 
     _buildSummaryCardsHtml() {
       const tds = this.summaryCards.map(c =>
-        `<td style="padding:8px 20px;text-align:center;border:1px solid #e5e7eb;">
+        `<td style="padding:4px 14px;text-align:center;border:1px solid #e5e7eb;">
           <div style="font-size:24px;font-weight:700;">${c.value||0}</div>
           <div style="font-size:12px;color:#6b7280;">${this._he(c.label)}</div>
         </td>`
@@ -872,8 +872,8 @@ document.addEventListener('alpine:init', () => {
 
     _buildBuyerTableHtml() {
       const ths = ['采购员','Open','无OC','应交未交','晚于节点','已催未回复','Top风险制造商'];
-      const thStyle = 'border:1px solid #d1d5db;background:#f3f4f6;padding:5px 8px;text-align:left;font-size:12px;';
-      const tdStyle = 'border:1px solid #e5e7eb;padding:4px 8px;font-size:12px;';
+      const thStyle = 'border:1px solid #d1d5db;background:#f3f4f6;padding:3px 6px;text-align:left;font-size:12px;';
+      const tdStyle = 'border:1px solid #e5e7eb;padding:2px 6px;font-size:12px;';
       const hs = ths.map(h=>`<th style="${thStyle}">${h}</th>`).join('');
       const rows = this.sortedBuyerRows.map(r =>
         `<tr>
@@ -893,22 +893,22 @@ document.addEventListener('alpine:init', () => {
     // 为单个 value_type 生成 Pivot A 表格 HTML
     _buildOnePivotAHtml(pivotData, label) {
       if (!pivotData?.buyers?.length) return '';
-      const thStyle = 'border:1px solid #d1d5db;background:#f3f4f6;padding:4px 6px;text-align:center;font-size:11px;';
-      const tdStyle = 'border:1px solid #e5e7eb;padding:4px 6px;text-align:center;font-size:12px;';
+      const thStyle = 'border:1px solid #d1d5db;background:#f3f4f6;padding:2px 4px;text-align:center;font-size:11px;';
+      const tdStyle = 'border:1px solid #e5e7eb;padding:2px 4px;text-align:center;font-size:12px;';
       const dateHs = pivotData.dates.map(d=>`<th style="${thStyle}">${d}</th>`).join('');
       const rows = pivotData.buyers.map(b => {
         const tds = pivotData.dates.map(d => {
           const v = (pivotData.cells?.[b]?.[d]) || 0;
-          return `<td style="${tdStyle}">${v||'—'}</td>`;
+          return `<td style="${tdStyle}">${v||''}</td>`;
         }).join('');
-        return `<tr><td style="border:1px solid #e5e7eb;padding:4px 8px;font-weight:600;font-size:12px;">${this._he(b)}</td>${tds}<td style="${tdStyle}font-weight:700;background:#f9fafb;">${pivotData.row_totals[b]||0}</td></tr>`;
+        return `<tr><td style="border:1px solid #e5e7eb;padding:2px 6px;font-weight:600;font-size:12px;">${this._he(b)}</td>${tds}<td style="${tdStyle}font-weight:700;background:#f9fafb;">${pivotData.row_totals[b]||0}</td></tr>`;
       }).join('');
       const colTotals = pivotData.dates.map(d=>`<td style="${tdStyle}font-weight:700;background:#f3f4f6;">${pivotData.col_totals[d]||0}</td>`).join('');
       const grand = pivotData.buyers.reduce((s,b)=>s+(pivotData.row_totals[b]||0),0);
       return `<h3 style="margin:16px 0 6px;font-size:14px;">当前【${label}】明细</h3>
 <table style="border-collapse:collapse;font-size:12px;margin-bottom:16px;">
 <thead><tr><th style="${thStyle}text-align:left;min-width:100px;">采购员</th>${dateHs}<th style="${thStyle}">合计</th></tr></thead>
-<tbody>${rows}<tr><td style="border:1px solid #d1d5db;padding:4px 8px;font-weight:700;background:#f3f4f6;font-size:12px;">合计</td>${colTotals}<td style="${tdStyle}font-weight:700;background:#f3f4f6;">${grand}</td></tr></tbody></table>`;
+<tbody>${rows}<tr><td style="border:1px solid #d1d5db;padding:2px 6px;font-weight:700;background:#f3f4f6;font-size:12px;">合计</td>${colTotals}<td style="${tdStyle}font-weight:700;background:#f3f4f6;">${grand}</td></tr></tbody></table>`;
     },
 
     // 合并多类型为一张表（行=采购员，列=日期，单元格显示多类型合计）
@@ -916,23 +916,23 @@ document.addEventListener('alpine:init', () => {
       if (!this.pivotA?.buyers?.length) return '';
       const labels = { no_oc:'无OC', overdue_now:'应交未交', overdue_keydate:'晚于节点' };
       const selLabels = types.map(t => labels[t] || t).join('/');
-      const thStyle = 'border:1px solid #d1d5db;background:#f3f4f6;padding:4px 6px;text-align:center;font-size:11px;';
-      const tdStyle = 'border:1px solid #e5e7eb;padding:4px 6px;text-align:center;font-size:12px;';
+      const thStyle = 'border:1px solid #d1d5db;background:#f3f4f6;padding:2px 4px;text-align:center;font-size:11px;';
+      const tdStyle = 'border:1px solid #e5e7eb;padding:2px 4px;text-align:center;font-size:12px;';
       // 合并日期列（取当前 pivotA 日期；实际合并需要所有类型都拉数据，此处用当前已加载数据简化）
       const dateHs = this.pivotA.dates.map(d=>`<th style="${thStyle}">${d}</th>`).join('');
       const rows = this.pivotA.buyers.map(b => {
         const tds = this.pivotA.dates.map(d => {
           const v = (this.pivotA.cells?.[b]?.[d]) || 0;
-          return `<td style="${tdStyle}">${v||'—'}</td>`;
+          return `<td style="${tdStyle}">${v||''}</td>`;
         }).join('');
-        return `<tr><td style="border:1px solid #e5e7eb;padding:4px 8px;font-weight:600;font-size:12px;">${this._he(b)}</td>${tds}<td style="${tdStyle}font-weight:700;background:#f9fafb;">${this.pivotA.row_totals[b]||0}</td></tr>`;
+        return `<tr><td style="border:1px solid #e5e7eb;padding:2px 6px;font-weight:600;font-size:12px;">${this._he(b)}</td>${tds}<td style="${tdStyle}font-weight:700;background:#f9fafb;">${this.pivotA.row_totals[b]||0}</td></tr>`;
       }).join('');
       const colTotals = this.pivotA.dates.map(d=>`<td style="${tdStyle}font-weight:700;background:#f3f4f6;">${this.pivotA.col_totals[d]||0}</td>`).join('');
       const grand = this.pivotA.buyers.reduce((s,b)=>s+(this.pivotA.row_totals[b]||0),0);
       return `<h3 style="margin:16px 0 6px;font-size:14px;">当前【${selLabels}】明细</h3>
 <table style="border-collapse:collapse;font-size:12px;margin-bottom:16px;">
 <thead><tr><th style="${thStyle}text-align:left;min-width:100px;">采购员</th>${dateHs}<th style="${thStyle}">合计</th></tr></thead>
-<tbody>${rows}<tr><td style="border:1px solid #d1d5db;padding:4px 8px;font-weight:700;background:#f3f4f6;font-size:12px;">合计</td>${colTotals}<td style="${tdStyle}font-weight:700;background:#f3f4f6;">${grand}</td></tr></tbody></table>`;
+<tbody>${rows}<tr><td style="border:1px solid #d1d5db;padding:2px 6px;font-weight:700;background:#f3f4f6;font-size:12px;">合计</td>${colTotals}<td style="${tdStyle}font-weight:700;background:#f3f4f6;">${grand}</td></tr></tbody></table>`;
     },
 
     _buildPivotAHtml() {
@@ -950,12 +950,12 @@ document.addEventListener('alpine:init', () => {
 
     _buildPivotBHtml() {
       if (!this.pivotB?.rows?.length) return '';
-      const thStyle = 'border:1px solid #d1d5db;background:#f3f4f6;padding:5px 8px;font-size:12px;';
+      const thStyle = 'border:1px solid #d1d5db;background:#f3f4f6;padding:3px 6px;font-size:12px;';
       const rows = this.pivotB.rows.map(r => {
         const mfrRows = r.manufacturers.map(m=>
-          `<tr><td style="border:1px solid #e5e7eb;padding:3px 8px 3px 32px;font-size:12px;color:#374151;">└ ${this._he(m.name)}</td><td style="border:1px solid #e5e7eb;padding:3px 6px;text-align:center;font-size:12px;">${m.count}</td></tr>`
+          `<tr><td style="border:1px solid #e5e7eb;padding:2px 6px 2px 28px;font-size:12px;color:#374151;">└ ${this._he(m.name)}</td><td style="border:1px solid #e5e7eb;padding:2px 6px;text-align:center;font-size:12px;">${m.count}</td></tr>`
         ).join('');
-        return `<tr style="background:#f9fafb;"><td style="border:1px solid #e5e7eb;padding:5px 8px;font-weight:700;font-size:12px;">${this._he(r.buyer)}</td><td style="border:1px solid #e5e7eb;padding:5px 6px;text-align:center;font-weight:700;color:#7c3aed;font-size:12px;">${r.total}</td></tr>${mfrRows}`;
+        return `<tr style="background:#f9fafb;"><td style="border:1px solid #e5e7eb;padding:3px 6px;font-weight:700;font-size:12px;">${this._he(r.buyer)}</td><td style="border:1px solid #e5e7eb;padding:3px 6px;text-align:center;font-weight:700;color:#7c3aed;font-size:12px;">${r.total}</td></tr>${mfrRows}`;
       }).join('');
       return `<h3 style="margin:16px 0 6px;font-size:14px;">采购员 → 制造商 晚于节点明细</h3>
 <table style="border-collapse:collapse;font-size:12px;margin-bottom:16px;">
@@ -966,7 +966,7 @@ document.addEventListener('alpine:init', () => {
     async buildExportHtml() {
       const etaLbl = this.etaLabel();
       let html = `<html><body style="font-family:Arial,'Microsoft YaHei',sans-serif;font-size:13px;color:#111827;">`;
-      html += `<p>各位好，以下为 <strong>${this._he(this.pname)}</strong> 物料概览，KEY DATE：<strong>${this._he(this.leadKeyDate||'—')}</strong>，ETA基准：<strong>${etaLbl}</strong>。</p>`;
+      html += `<p>各位好，以下为 <strong>${this._he(this.pname)}</strong> 物料概览。</p>`;
       if (this.exportElements.buyerTable) html += this._buildBuyerTableHtml();
       if (this.exportElements.buyerChart) {
         const c = document.getElementById('chart-buyer-risk');

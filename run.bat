@@ -3,7 +3,7 @@ cd /d "%~dp0"
 
 if not exist .env (
     copy .env.example .env
-    echo [ChaseBase] .env created. Please fill in ANTHROPIC_API_KEY and restart.
+    echo [ChaseBase] .env created. Please fill in API_KEY and restart.
     notepad .env
     exit /b
 )
@@ -18,10 +18,16 @@ call .venv\Scripts\activate
 echo [ChaseBase] Installing dependencies...
 pip install -r requirements.txt -q
 
-echo [ChaseBase] Starting server at http://127.0.0.1:8000
-:: Open browser after 3-second delay so the server has time to start
+:: ── [1/2] 启动本地 LLM 代理（后台窗口）──────────────────────────
+echo [ChaseBase] Starting LLM proxy at http://127.0.0.1:11434 ...
+start "ChaseBase LLM Proxy" /min python proxy_server.py
+
+:: 等待代理就绪
+timeout /t 2 /nobreak > nul
+
+:: ── [2/2] 启动 ChaseBase 主应用 ──────────────────────────────────
+echo [ChaseBase] Starting app at http://127.0.0.1:8000
 start "" powershell -NoProfile -Command "Start-Sleep 3; Start-Process 'http://127.0.0.1:8000'"
-:: --reload-dir app: only watch app/ for changes, avoids .venv triggering spurious reloads on startup
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --reload-dir app
 
 pause

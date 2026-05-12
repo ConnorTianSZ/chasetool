@@ -142,11 +142,11 @@ def _build_lead_buyer_html(materials: list[dict], include_states: set[str], key_
         "font-family:Arial,'Microsoft YaHei',sans-serif;font-size:13px;color:#111827;"
     )
     table_style = "border-collapse:collapse;width:100%;font-size:12px;margin:8px 0 18px;"
-    th_style = "border:1px solid #d1d5db;background:#f3f4f6;padding:6px;text-align:left;"
-    td_style = "border:1px solid #e5e7eb;padding:5px;vertical-align:top;"
+    th_style = "border:1px solid #d1d5db;background:#f3f4f6;padding:3px 6px;text-align:left;"
+    td_style = "border:1px solid #e5e7eb;padding:2px 5px;vertical-align:top;"
     html_parts = [
         f"<html><body style=\"{styles}\">",
-        f"<p>各位好，以下为 Dashboard 导出的项目交期风险清单，KEY DATE: <strong>{_html_escape(key_date)}</strong>。</p>",
+        "<p>各位好，以下为 Dashboard 导出的项目交期风险清单。</p>",
         "<p>请对应采购员优先处理无 OC、应交未交、晚于节点及已催未回复的物料。</p>",
     ]
 

@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from app.tools.chase_email import build_drafts
 from app.services.email_marker import parse_marker
 from app.services.outlook_send import send_chase_email
+from app.db.activity import log_chase_action, EVT_CHASE_DRAFT, EVT_CHASE_SENT
 
 router = APIRouter(prefix="/api/projects/{project_id}/chase", tags=["chase"])
 
@@ -22,11 +23,19 @@ class ChaseRequest(BaseModel):
 @router.post("/generate")
 def generate_drafts(req: ChaseRequest, project_id: str = FPath(...)):
     try:
-        return build_drafts(
+        result = build_drafts(
             material_ids=req.material_ids,
             project_id=project_id,
             chase_type_override=req.chase_type,
         )
+        # 记录草稿生成日志
+        log_chase_action(
+            EVT_CHASE_DRAFT,
+            project_id,
+            drafts=result["drafts"],
+            skipped=result["skipped"],
+        )
+        return result
     except Exception as e:
         import logging
         logging.getLogger("chasebase").exception(
@@ -70,6 +79,14 @@ def send_drafts(req: ChaseRequest, project_id: str = FPath(...)):
                 is_html=is_html,
             )
             send_results.append(r)
+
+        # 记录发送日志（draft 或 send 都记录，mode 写进 meta）
+        log_chase_action(
+            EVT_CHASE_SENT,
+            project_id,
+            drafts=drafts,
+            skipped=skipped,
+        )
 
         return {"ok": True, "drafts_result": send_results, "skipped": skipped}
     except Exception as e:

@@ -15,6 +15,7 @@ from app.services.excel_io import (
     _is_excel,
 )
 from app.db.connection import get_connection
+from app.db.activity import log_activity, EVT_IMPORT_EXCEL, EVT_ETA_UPLOAD
 
 router = APIRouter(prefix="/api/projects/{project_id}/imports", tags=["imports"])
 
@@ -27,7 +28,8 @@ async def upload_excel(
     if not _is_excel(file.filename or ""):
         raise HTTPException(400, "Only .xlsx / .xls files are supported")
 
-    suffix = Path(file.filename).suffix
+    filename = file.filename or ""
+    suffix = Path(filename).suffix
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         shutil.copyfileobj(file.file, tmp)
         tmp_path = tmp.name
@@ -37,6 +39,17 @@ async def upload_excel(
     finally:
         os.unlink(tmp_path)
 
+    # 记录 SAP Excel 上传日志
+    log_activity(
+        EVT_IMPORT_EXCEL,
+        project_id,
+        meta={
+            "file_name":    filename,
+            "rows_added":   result.get("added",   0),
+            "rows_updated": result.get("updated", 0),
+            "rows_skipped": result.get("skipped", 0),
+        },
+    )
     return result
 
 
@@ -48,7 +61,8 @@ async def upload_chase_updates(
     if not _is_excel(file.filename or ""):
         raise HTTPException(400, "Only .xlsx / .xls files are supported")
 
-    suffix = Path(file.filename).suffix
+    filename = file.filename or ""
+    suffix = Path(filename).suffix
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         shutil.copyfileobj(file.file, tmp)
         tmp_path = tmp.name
@@ -60,6 +74,16 @@ async def upload_chase_updates(
     finally:
         os.unlink(tmp_path)
 
+    # 记录催货回复交期上传日志（手工填写的 ETA 回填表）
+    log_activity(
+        EVT_ETA_UPLOAD,
+        project_id,
+        meta={
+            "file_name":    filename,
+            "rows_updated": result.get("updated", 0),
+            "rows_skipped": result.get("skipped", 0),
+        },
+    )
     return result
 
 
@@ -71,7 +95,18 @@ def import_from_path(
     p = Path(path)
     if not p.exists():
         raise HTTPException(404, f"File not found: {path}")
-    return import_excel(p, project_id=project_id)
+    result = import_excel(p, project_id=project_id)
+    log_activity(
+        EVT_IMPORT_EXCEL,
+        project_id,
+        meta={
+            "file_name":    p.name,
+            "rows_added":   result.get("added",   0),
+            "rows_updated": result.get("updated", 0),
+            "rows_skipped": result.get("skipped", 0),
+        },
+    )
+    return result
 
 
 @router.get("/history")
